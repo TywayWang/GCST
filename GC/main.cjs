@@ -827,15 +827,31 @@ function quitGCSTSuite() {
   }, 200);
 }
 
-function createTray() {
-  const iconPath = path.join(__dirname, 'assets', 'gcst-icon.png');
-  let icon = fs.existsSync(iconPath)
-    ? nativeImage.createFromPath(iconPath)
-    : nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png'));
+function getTrayIcon(active = false) {
+  if (process.platform === 'darwin') {
+    const templateName = active ? 'gcstTemplateActive.png' : 'gcstTemplate.png';
+    const templatePath = path.join(__dirname, 'assets', templateName);
+    if (fs.existsSync(templatePath)) {
+      const img = nativeImage.createFromPath(templatePath);
+      img.setTemplateImage(true);
+      return img;
+    }
+  }
 
+  const iconName = active ? 'gcst-icon-active.png' : 'gcst-icon.png';
+  let iconPath = path.join(__dirname, 'assets', iconName);
+  if (!fs.existsSync(iconPath)) {
+    iconPath = path.join(__dirname, 'assets', active ? 'icon-recording.png' : 'icon.png');
+  }
+  let icon = nativeImage.createFromPath(iconPath);
   if (process.platform === 'darwin') {
     icon = icon.resize({ width: 18, height: 18 });
   }
+  return icon;
+}
+
+function createTray() {
+  const icon = getTrayIcon(isGCRunning);
 
   tray = new Tray(icon);
   tray.setToolTip('GCST Suite: British Grammar Checker (GC) & Hover Translator (ST)');
@@ -864,15 +880,7 @@ function createTray() {
 async function updateTray() {
   if (!tray) return;
 
-  const iconName = isGCRunning ? 'gcst-icon-active.png' : 'gcst-icon.png';
-  let iconPath = path.join(__dirname, 'assets', iconName);
-  if (!fs.existsSync(iconPath)) {
-    iconPath = path.join(__dirname, 'assets', isGCRunning ? 'icon-recording.png' : 'icon.png');
-  }
-  let icon = nativeImage.createFromPath(iconPath);
-  if (process.platform === 'darwin') {
-    icon = icon.resize({ width: 18, height: 18 });
-  }
+  const icon = getTrayIcon(isGCRunning);
   tray.setImage(icon);
 
   const targetDesc = process.platform === 'darwin'

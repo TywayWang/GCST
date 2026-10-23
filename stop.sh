@@ -10,6 +10,7 @@ echo "============================================================"
 
 stop_gc() {
     echo "[GCST] Stopping GC instances..."
+    pkill -f "gc-british-grammar-checker" || true
     pkill -f "$SCRIPT_DIR/GC" || true
     pkill -f "KeyMonitor_mac" || true
 }
