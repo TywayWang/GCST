@@ -1,5 +1,6 @@
 import Cocoa
 import ApplicationServices
+import Network
 
 public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SelectionMonitorDelegate {
     private var statusItem: NSStatusItem?
@@ -7,6 +8,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Selec
     private var isEnabledMenuItem: NSMenuItem?
     private var accessibilityMenuItem: NSMenuItem?
     private var ollamaStatusMenuItem: NSMenuItem?
+    private var commandListener: NWListener?
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         STLog("ST applicationDidFinishLaunching: started. PID: \(ProcessInfo.processInfo.processIdentifier)")
@@ -19,8 +21,17 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Selec
         selectionMonitor.delegate = self
         selectionMonitor.start()
 
-        // Set up Menu Bar Status Item
-        setupStatusBarItem()
+        // Set up Menu Bar Status Item (only if in standalone mode; otherwise GCST manages unified tray)
+        let isStandalone = ProcessInfo.processInfo.arguments.contains("--standalone") ||
+                           ProcessInfo.processInfo.environment["ST_STANDALONE"] == "1"
+        if isStandalone {
+            setupStatusBarItem()
+        } else {
+            STLog("Running in unified GCST suite mode: menu bar icon is handled by GCST")
+        }
+
+        // Start internal IPC command listener on port 11435 for GCST suite coordination
+        startCommandListener()
 
         // Check Ollama status
         checkOllamaConnection()
@@ -28,7 +39,72 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Selec
 
     public func applicationWillTerminate(_ notification: Notification) {
         STLog("ST applicationWillTerminate")
+        commandListener?.cancel()
+        commandListener = nil
         selectionMonitor.stop()
+    }
+
+    // MARK: - Internal IPC Command Listener
+
+    private func startCommandListener() {
+        do {
+            let port = NWEndpoint.Port(rawValue: 11435)!
+            let listener = try NWListener(using: .tcp, on: port)
+            listener.newConnectionHandler = { [weak self] connection in
+                self?.handleConnection(connection)
+            }
+            listener.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    STLog("ST Command listener is ready on 127.0.0.1:11435")
+                case .failed(let err):
+                    STLog("ST Command listener failed: \(err)")
+                default:
+                    break
+                }
+            }
+            listener.start(queue: .main)
+            self.commandListener = listener
+        } catch {
+            STLog("Failed to bind command listener on port 11435: \(error)")
+        }
+    }
+
+    private func handleConnection(_ connection: NWConnection) {
+        connection.start(queue: .main)
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 2048) { [weak self] data, _, _, _ in
+            guard let self = self, let data = data, let req = String(data: data, encoding: .utf8) else {
+                connection.cancel()
+                return
+            }
+
+            var responseBody = "{\"ok\":true}"
+            if req.contains("GET /toggle") {
+                self.selectionMonitor.isEnabled.toggle()
+                self.isEnabledMenuItem?.state = self.selectionMonitor.isEnabled ? .on : .off
+                responseBody = "{\"enabled\":\(self.selectionMonitor.isEnabled)}"
+                STLog("IPC command: toggle -> isEnabled: \(self.selectionMonitor.isEnabled)")
+            } else if req.contains("GET /status") {
+                let model = OllamaService.shared.modelName
+                let enabled = self.selectionMonitor.isEnabled
+                responseBody = "{\"running\":true,\"enabled\":\(enabled),\"model\":\"\(model)\"}"
+            } else if req.contains("GET /test") {
+                self.triggerTestPopup()
+                responseBody = "{\"test\":true}"
+                STLog("IPC command: trigger test popup")
+            } else if req.contains("GET /quit") {
+                STLog("IPC command: quit")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    NSApp.terminate(nil)
+                }
+                responseBody = "{\"quit\":true}"
+            }
+
+            let httpResponse = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: \(responseBody.utf8.count)\r\nConnection: close\r\n\r\n\(responseBody)"
+            connection.send(content: httpResponse.data(using: .utf8), completion: .contentProcessed({ _ in
+                connection.cancel()
+            }))
+        }
     }
 
     // MARK: - Accessibility Check
@@ -61,7 +137,6 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Selec
         if isTrusted {
             accessibilityMenuItem?.title = "Accessibility: Granted ✓"
             accessibilityMenuItem?.action = nil
-            // Ensure monitor is active
             selectionMonitor.start()
         } else {
             accessibilityMenuItem?.title = "⚠️ Grant Accessibility..."
@@ -71,7 +146,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Selec
         checkOllamaConnection()
     }
 
-    // MARK: - Status Bar Setup
+    // MARK: - Status Bar Setup (Standalone Mode Only)
 
     private func setupStatusBarItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -129,7 +204,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Selec
         delayParent.submenu = delayMenu
         menu.addItem(delayParent)
 
-        // Manual test action (centered and pinned so it's guaranteed to be seen)
+        // Manual test action
         let testItem = NSMenuItem(title: "Test Popup Translation", action: #selector(triggerTestPopup), keyEquivalent: "t")
         testItem.target = self
         menu.addItem(testItem)
@@ -177,7 +252,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Selec
         }
     }
 
-    @objc private func triggerTestPopup() {
+    @objc public func triggerTestPopup() {
         STLog("triggerTestPopup: User triggered manual test popup")
         let sample = "Quantum entanglement is a physical phenomenon that occurs when a group of particles are generated, interact, or share spatial proximity."
         TranslationPanel.shared.showCenter(text: sample)

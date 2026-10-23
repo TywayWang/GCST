@@ -55,7 +55,7 @@ start_gc() {
         chmod +x bin/KeyMonitor_mac 2>/dev/null || true
 
         echo "  [->] Launching GC..."
-        nohup npm start >/dev/null 2>&1 &
+        nohup ./node_modules/.bin/electron . >/dev/null 2>&1 &
         echo "  [OK] GC launched in background (active in desktop HUD & system tray)."
     )
 }

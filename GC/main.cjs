@@ -1,6 +1,7 @@
 const { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, screen, clipboard, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
 const { KeyMonitorManager } = require('./src/keyMonitorManager.cjs');
 const { OllamaClient } = require('./src/ollamaClient.cjs');
 
@@ -782,14 +783,62 @@ function resetAllWindowPositions() {
   saveConfig({ positions, x: positions.terminal?.x, y: positions.terminal?.y });
 }
 
+function querySTStatus() {
+  return new Promise((resolve) => {
+    const req = http.get('http://127.0.0.1:11435/status', { timeout: 800 }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(data);
+          resolve({ running: true, enabled: !!json.enabled, model: json.model });
+        } catch (e) {
+          resolve({ running: false, enabled: false });
+        }
+      });
+    });
+    req.on('error', () => resolve({ running: false, enabled: false }));
+    req.on('timeout', () => { req.destroy(); resolve({ running: false, enabled: false }); });
+  });
+}
+
+function toggleST() {
+  http.get('http://127.0.0.1:11435/toggle', { timeout: 1000 }, () => {
+    setTimeout(updateTray, 200);
+  }).on('error', () => {});
+}
+
+function testSTPopup() {
+  http.get('http://127.0.0.1:11435/test', { timeout: 1000 }, () => {}).on('error', () => {});
+}
+
+function quitGCSTSuite() {
+  app.isQuitting = true;
+  try {
+    http.get('http://127.0.0.1:11435/quit', { timeout: 500 }, () => {}).on('error', () => {});
+  } catch (e) {}
+
+  setTimeout(() => {
+    try {
+      const { exec } = require('child_process');
+      exec('pkill -f "ST.app/Contents/MacOS/ST" || true');
+    } catch (e) {}
+    app.quit();
+  }, 200);
+}
+
 function createTray() {
-  const normalIconPath = path.join(__dirname, 'assets', 'icon.png');
-  let normalIcon = nativeImage.createFromPath(normalIconPath);
+  const iconPath = path.join(__dirname, 'assets', 'gcst-icon.png');
+  let icon = fs.existsSync(iconPath)
+    ? nativeImage.createFromPath(iconPath)
+    : nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png'));
+
   if (process.platform === 'darwin') {
-    normalIcon = normalIcon.resize({ width: 18, height: 18 });
+    icon = icon.resize({ width: 18, height: 18 });
   }
 
-  tray = new Tray(normalIcon);
+  tray = new Tray(icon);
+  tray.setToolTip('GCST Suite: British Grammar Checker (GC) & Hover Translator (ST)');
   updateTray();
 
   tray.on('click', () => {
@@ -815,8 +864,11 @@ function createTray() {
 async function updateTray() {
   if (!tray) return;
 
-  const iconName = isGCRunning ? 'icon-recording.png' : 'icon.png';
-  const iconPath = path.join(__dirname, 'assets', iconName);
+  const iconName = isGCRunning ? 'gcst-icon-active.png' : 'gcst-icon.png';
+  let iconPath = path.join(__dirname, 'assets', iconName);
+  if (!fs.existsSync(iconPath)) {
+    iconPath = path.join(__dirname, 'assets', isGCRunning ? 'icon-recording.png' : 'icon.png');
+  }
   let icon = nativeImage.createFromPath(iconPath);
   if (process.platform === 'darwin') {
     icon = icon.resize({ width: 18, height: 18 });
@@ -828,13 +880,18 @@ async function updateTray() {
     : 'Terminal / CyberTerminal / Notepad';
   const hotkeyDesc = process.platform === 'darwin' ? 'Shift+Cmd+X' : 'Ctrl+Alt+X';
 
-  const statusTooltip = isGCRunning
-    ? `GC: ON [Monitoring ${targetDesc}] - ${hotkeyDesc}`
-    : `GC: Standby / Off - Press ${hotkeyDesc} to Turn ON`;
+  const statusTooltip = `GCST Suite [GC: ${isGCRunning ? 'ON' : 'OFF'} | ST: Active]`;
   tray.setToolTip(statusTooltip);
 
-  let availableModels = ['gemma4:e4b'];
+  let stStatus = { running: false, enabled: false };
   try {
+    stStatus = await querySTStatus();
+  } catch (e) {}
+
+  let availableModels = ['gemma4:e4b'];
+  let isOllamaOnline = false;
+  try {
+    isOllamaOnline = await ollamaClient.checkHealth();
     availableModels = await ollamaClient.getAvailableModels();
     if (availableModels.length === 0) availableModels = ['gemma4:e4b'];
   } catch (e) {}
@@ -855,10 +912,16 @@ async function updateTray() {
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: `GC: ${isGCRunning ? 'ACTIVE (Running)' : 'OFF (Standby)'}`,
+      label: 'GCST Suite (Unified AI Desktop)',
       enabled: false
     },
     { type: 'separator' },
+
+    // --- GC Grammar & Spell Checker ---
+    {
+      label: `GC Grammar Checker: ${isGCRunning ? 'ACTIVE (On)' : 'STANDBY (Off)'}`,
+      enabled: false
+    },
     {
       label: isGCRunning ? 'Turn Off GC' : `Turn On GC (${hotkeyDesc})`,
       click: () => {
@@ -881,7 +944,7 @@ async function updateTray() {
       }
     },
     {
-      label: anyPopped ? 'Hide All Windows' : 'Show All Windows',
+      label: anyPopped ? 'Hide GC HUD' : 'Open GC HUD',
       click: () => {
         if (anyPopped) {
           for (const [tId] of targetInstances) {
@@ -889,23 +952,11 @@ async function updateTray() {
           }
         } else {
           showHoveringWindow('terminal');
-          showHoveringWindow('notes');
         }
       }
     },
     {
-      label: 'Check System Clipboard',
-      click: () => {
-        checkClipboardText();
-      }
-    },
-    { type: 'separator' },
-    {
-      label: 'Active Model',
-      submenu: modelMenuItems
-    },
-    {
-      label: 'English Check Mode',
+      label: 'GC English Dialect',
       submenu: [
         {
           label: 'British English (en-GB)',
@@ -933,14 +984,42 @@ async function updateTray() {
         }
       ]
     },
+    { type: 'separator' },
+
+    // --- ST Hover Translator ---
     {
-      label: `Target: ${targetDesc}`,
-      type: 'checkbox',
-      checked: true,
+      label: `ST Hover Translator: ${stStatus.running ? (stStatus.enabled ? 'ACTIVE (On)' : 'DISABLED (Paused)') : 'OFF (Not Running)'}`,
       enabled: false
     },
     {
-      label: 'Always on Top (Pin to Front)',
+      label: stStatus.enabled ? 'Pause ST Hover Translation' : 'Resume ST Hover Translation',
+      enabled: stStatus.running,
+      click: () => toggleST()
+    },
+    {
+      label: 'Test ST Translation Popup',
+      enabled: stStatus.running,
+      click: () => testSTPopup()
+    },
+    { type: 'separator' },
+
+    // --- Shared LLM Backend (Ollama) ---
+    {
+      label: 'Shared Model (Ollama)',
+      submenu: modelMenuItems
+    },
+    {
+      label: `Ollama: ${isOllamaOnline ? 'Online (127.0.0.1:11434)' : 'Offline'}`,
+      enabled: false
+    },
+    {
+      label: 'Check System Clipboard in GC',
+      click: () => {
+        checkClipboardText();
+      }
+    },
+    {
+      label: 'Always on Top (GC HUD)',
       type: 'checkbox',
       checked: isAlwaysOnTopEnabled,
       click: () => {
@@ -964,16 +1043,9 @@ async function updateTray() {
     },
     { type: 'separator' },
     {
-      label: 'Reset Window Positions',
+      label: 'Quit GCST Suite',
       click: () => {
-        resetAllWindowPositions();
-      }
-    },
-    {
-      label: 'Quit GC',
-      click: () => {
-        app.isQuitting = true;
-        app.quit();
+        quitGCSTSuite();
       }
     }
   ]);

@@ -4,11 +4,13 @@ public struct OllamaModel: Codable {
     public let name: String
     public let modifiedAt: String?
     public let size: Int64?
+    public let capabilities: [String]?
 
     enum CodingKeys: String, CodingKey {
         case name
         case modifiedAt = "modified_at"
         case size
+        case capabilities
     }
 }
 
@@ -39,6 +41,7 @@ public class OllamaService: NSObject, URLSessionDataDelegate {
 
     public var host: String = "http://localhost:11434"
     public var modelName: String = "gemma4:e4b"
+    public var cachedModels: [String] = ["gemma4:e4b"]
 
     private var activeSession: URLSession?
     private var currentTask: URLSessionDataTask?
@@ -50,31 +53,71 @@ public class OllamaService: NSObject, URLSessionDataDelegate {
 
     private override init() {
         super.init()
+        loadConfiguredModel()
+        fetchModels(completion: nil)
     }
 
-    public func checkHealth(completion: @escaping (Bool, [String]) -> Void) {
+    private func loadConfiguredModel() {
+        let configURL = URL(fileURLWithPath: "config.json")
+        if let data = try? Data(contentsOf: configURL),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let m = json["model"] as? String, !m.isEmpty {
+            self.modelName = m
+        }
+    }
+
+    public func setModel(_ name: String) {
+        self.modelName = name
+    }
+
+    public func fetchModels(completion: (([String]) -> Void)?) {
         guard let url = URL(string: "\(host)/api/tags") else {
-            completion(false, [])
+            completion?(cachedModels)
             return
         }
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 3.0
 
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            guard let data = data, error == nil else {
-                DispatchQueue.main.async { completion(false, []) }
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            guard let self = self, let data = data, error == nil else {
+                DispatchQueue.main.async { completion?(self?.cachedModels ?? []) }
                 return
             }
 
             do {
                 let tags = try JSONDecoder().decode(OllamaTagsResponse.self, from: data)
-                let names = tags.models.map { $0.name }
-                DispatchQueue.main.async { completion(true, names) }
+                var valid: [String] = []
+                for m in tags.models {
+                    let name = m.name
+                    let caps = m.capabilities ?? []
+                    if caps.contains("embedding") && !caps.contains("completion") {
+                        continue
+                    }
+                    if name.lowercased().contains("embedding") {
+                        continue
+                    }
+                    if !name.isEmpty {
+                        valid.append(name)
+                    }
+                }
+                if !valid.isEmpty {
+                    self.cachedModels = valid
+                    if !valid.contains(self.modelName) && !self.modelName.isEmpty {
+                        self.cachedModels.insert(self.modelName, at: 0)
+                    }
+                }
+                DispatchQueue.main.async { completion?(self.cachedModels) }
             } catch {
-                DispatchQueue.main.async { completion(true, []) }
+                DispatchQueue.main.async { completion?(self.cachedModels) }
             }
         }.resume()
+    }
+
+    public func checkHealth(completion: @escaping (Bool, [String]) -> Void) {
+        fetchModels { models in
+            completion(!models.isEmpty, models)
+        }
     }
 
     public func cancelCurrentTranslation() {
@@ -89,7 +132,11 @@ public class OllamaService: NSObject, URLSessionDataDelegate {
     public func translateStream(
         text: String,
         onToken: @escaping (String) -> Void,
-        onComplete: @escaping (Result<String, Error>) -> Void
+        onComplete: @escaping (Result<String, Error>) -> Void,
+        sourceLang: String = "Auto",
+        targetLang: String = "Chinese",
+        sourceMode: String = "Auto",
+        targetMode: String = "Manual"
     ) {
         cancelCurrentTranslation()
 
@@ -103,7 +150,16 @@ public class OllamaService: NSObject, URLSessionDataDelegate {
         self.accumulatedText = ""
         self.buffer.removeAll()
 
-        let systemPrompt = "You are a professional English-to-Chinese translator. Translate the user input into fluent, natural Simplified Chinese. Output ONLY the translation directly. Never include pinyin, notes, commentary, quotes, or markdown explanations."
+        let systemPrompt: String
+        if sourceMode == "Auto" && targetMode == "Auto" {
+            systemPrompt = "You are a professional multilingual translator. Automatically detect the source language. If the input is in Chinese, translate it into fluent, natural English. If the input is in English or any other language, translate it into fluent, natural Simplified Chinese. Output ONLY the translation directly. Never include pinyin, notes, commentary, quotes, or markdown explanations."
+        } else if sourceMode == "Auto" {
+            systemPrompt = "You are a professional multilingual translator. Automatically detect the source language of the input and translate it into fluent, natural \(targetLang). Output ONLY the translation directly. Never include pinyin, notes, commentary, quotes, or markdown explanations."
+        } else if targetMode == "Auto" {
+            systemPrompt = "You are a professional multilingual translator. Translate the \(sourceLang) user input into fluent, natural Simplified Chinese (or into English if the input is Chinese). Output ONLY the translation directly. Never include pinyin, notes, commentary, quotes, or markdown explanations."
+        } else {
+            systemPrompt = "You are a professional multilingual translator. Translate the following \(sourceLang) user input into fluent, natural \(targetLang). Output ONLY the translation directly. Never include pinyin, notes, commentary, quotes, or markdown explanations."
+        }
 
         let payload: [String: Any] = [
             "model": modelName,
@@ -165,7 +221,6 @@ public class OllamaService: NSObject, URLSessionDataDelegate {
 
     public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let error = error as NSError?, error.code == NSURLErrorCancelled {
-            // Cancelled intentionally, ignore
             return
         }
 

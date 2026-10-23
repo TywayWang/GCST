@@ -201,7 +201,6 @@ Do not output markdown code blocks. Output raw JSON only.`
         { role: 'system', content: config.systemPrompt },
         { role: 'user', content: `${config.instruction}\n\n"${text}"` }
       ],
-      format: 'json',
       stream: false
     });
 
@@ -224,6 +223,23 @@ Do not output markdown code blocks. Output raw JSON only.`
           const durationMs = Date.now() - startTime;
           try {
             const data = JSON.parse(raw);
+
+            if (res.statusCode >= 400 || data.error) {
+              const errMsg = data.error || `HTTP ${res.statusCode}`;
+              console.error(`[OllamaClient] API Error (${res.statusCode}):`, errMsg);
+              resolve({
+                success: false,
+                original: text,
+                corrected: text,
+                issues: [],
+                error: errMsg,
+                durationMs,
+                model: modelToUse,
+                dialect: dialectToUse
+              });
+              return;
+            }
+
             const content = data.message ? (data.message.content || '').trim() : '';
 
             if (!content) {
