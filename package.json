@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "GCST - Unified British English Grammar & Spell Checker (GC) and On-Screen Hover Translator (ST) Desktop Suite",
   "scripts": {
+    "postinstall": "cd GC && npm install",
     "start": "node scripts/start.cjs All",
     "start:gc": "node scripts/start.cjs GC",
     "start:st": "node scripts/start.cjs ST",

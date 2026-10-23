@@ -228,23 +228,39 @@ static void applyPasteForTarget(NSString *targetId, NSString *targetName, BOOL i
     }
 }
 
-static BOOL classifyForegroundTarget(NSRunningApplication *app, NSString **outTargetId, NSString **outTargetName, BOOL *outIsTextEditor) {
+static BOOL isGCApp(NSRunningApplication *app) {
     if (!app) return NO;
     NSString *bundleId = [app bundleIdentifier] ?: @"";
     NSString *appName = [app localizedName] ?: @"";
-
-    // 1. Explicitly ignore GC itself
-    if ([appName rangeOfString:@"GC" options:NSCaseInsensitiveSearch].location != NSNotFound &&
-        ([appName rangeOfString:@"British" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-         [appName rangeOfString:@"Editor" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-         [appName rangeOfString:@"Checker" options:NSCaseInsensitiveSearch].location != NSNotFound)) {
-        return NO;
-    }
     if ([bundleId isEqualToString:@"gc-british-grammar-checker"] ||
-        ([bundleId rangeOfString:@"electron" options:NSCaseInsensitiveSearch].location != NSNotFound &&
-         [appName rangeOfString:@"GC" options:NSCaseInsensitiveSearch].location != NSNotFound)) {
-        return NO;
+        [bundleId rangeOfString:@"gc-british" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+        return YES;
     }
+    if ([bundleId isEqualToString:@"com.github.Electron"] ||
+        [appName caseInsensitiveCompare:@"Electron"] == NSOrderedSame) {
+        return YES;
+    }
+    if ([appName caseInsensitiveCompare:@"GC"] == NSOrderedSame ||
+        ([appName rangeOfString:@"GC" options:NSCaseInsensitiveSearch].location != NSNotFound &&
+         ([appName rangeOfString:@"British" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+          [appName rangeOfString:@"Editor" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+          [appName rangeOfString:@"Checker" options:NSCaseInsensitiveSearch].location != NSNotFound))) {
+        return YES;
+    }
+    return NO;
+}
+
+static BOOL checkIfForegroundIsGC(void) {
+    NSRunningApplication *frontApp = [[NSWorkspace sharedWorkspace] frontmostApplication];
+    return isGCApp(frontApp);
+}
+
+static BOOL classifyForegroundTarget(NSRunningApplication *app, NSString **outTargetId, NSString **outTargetName, BOOL *outIsTextEditor) {
+    if (!app) return NO;
+    if (isGCApp(app)) return NO;
+
+    NSString *bundleId = [app bundleIdentifier] ?: @"";
+    NSString *appName = [app localizedName] ?: @"";
 
     // 2. Apple Notes
     if ([bundleId isEqualToString:@"com.apple.Notes"] ||
@@ -278,24 +294,42 @@ static BOOL classifyForegroundTarget(NSRunningApplication *app, NSString **outTa
     }
 
     // 5. Terminal Apps: Apple Terminal, iTerm2, Warp, Alacritty, Kitty, WezTerm, Ghostty, etc.
-    if ([bundleId isEqualToString:@"com.apple.Terminal"] ||
-        [bundleId isEqualToString:@"com.googlecode.iterm2"] ||
-        [bundleId isEqualToString:@"dev.warp.Warp-Terminal"] ||
-        [bundleId isEqualToString:@"io.alacritty"] ||
-        [bundleId isEqualToString:@"net.kovidgoyal.kitty"] ||
-        [bundleId isEqualToString:@"com.github.wez.wezterm"] ||
-        [bundleId isEqualToString:@"com.mitchellh.ghostty"] ||
-        [appName caseInsensitiveCompare:@"Terminal"] == NSOrderedSame ||
-        [appName caseInsensitiveCompare:@"iTerm"] == NSOrderedSame ||
-        [appName caseInsensitiveCompare:@"iTerm2"] == NSOrderedSame ||
-        [appName caseInsensitiveCompare:@"Warp"] == NSOrderedSame ||
-        [appName caseInsensitiveCompare:@"Alacritty"] == NSOrderedSame ||
-        [appName caseInsensitiveCompare:@"kitty"] == NSOrderedSame ||
-        [appName caseInsensitiveCompare:@"wezterm"] == NSOrderedSame ||
-        [appName caseInsensitiveCompare:@"wezterm-gui"] == NSOrderedSame ||
-        [appName caseInsensitiveCompare:@"ghostty"] == NSOrderedSame) {
+    BOOL isTerm = NO;
+    NSString *canonicalName = @"Terminal";
+
+    if ([bundleId rangeOfString:@"alacritty" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+        [appName caseInsensitiveCompare:@"alacritty"] == NSOrderedSame) {
+        isTerm = YES;
+        canonicalName = @"Alacritty";
+    } else if ([bundleId rangeOfString:@"iterm" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+               [appName rangeOfString:@"iterm" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+        isTerm = YES;
+        canonicalName = @"iTerm2";
+    } else if ([bundleId rangeOfString:@"warp" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+               [appName caseInsensitiveCompare:@"warp"] == NSOrderedSame) {
+        isTerm = YES;
+        canonicalName = @"Warp";
+    } else if ([bundleId rangeOfString:@"kitty" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+               [appName caseInsensitiveCompare:@"kitty"] == NSOrderedSame) {
+        isTerm = YES;
+        canonicalName = @"kitty";
+    } else if ([bundleId rangeOfString:@"wezterm" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+               [appName rangeOfString:@"wezterm" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+        isTerm = YES;
+        canonicalName = @"wezterm";
+    } else if ([bundleId rangeOfString:@"ghostty" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+               [appName caseInsensitiveCompare:@"ghostty"] == NSOrderedSame) {
+        isTerm = YES;
+        canonicalName = @"Ghostty";
+    } else if ([bundleId isEqualToString:@"com.apple.Terminal"] ||
+               [appName caseInsensitiveCompare:@"Terminal"] == NSOrderedSame) {
+        isTerm = YES;
+        canonicalName = @"Terminal";
+    }
+
+    if (isTerm) {
         if (outTargetId) *outTargetId = @"terminal";
-        if (outTargetName) *outTargetName = [appName length] > 0 ? appName : @"Terminal";
+        if (outTargetName) *outTargetName = [appName length] > 0 ? appName : canonicalName;
         if (outIsTextEditor) *outIsTextEditor = NO;
         return YES;
     }
@@ -402,11 +436,46 @@ static CGEventRef eventTapCallback(CGEventTapProxy proxy, CGEventType type, CGEv
     // Ignore GC's own hotkeys:
     // macOS: Shift + Command + X and Shift + Command + Z
     if (isCmd && isShift && (keyCode == kVK_ANSI_X || keyCode == kVK_ANSI_Z)) {
+        NSString *tId = nil;
+        NSString *tName = nil;
+        BOOL isEd = NO;
+        NSRunningApplication *frontApp = [[NSWorkspace sharedWorkspace] frontmostApplication];
+        if (classifyForegroundTarget(frontApp, &tId, &tName, &isEd)) {
+            pthread_mutex_lock(&_lock);
+            _activeTargetId = [tId copy];
+            _activeTargetName = [tName copy];
+            _activeIsTextEditor = isEd;
+            _cachedPid = [frontApp processIdentifier];
+            _cachedTimeMs = getNowMs();
+            _cachedIsTarget = YES;
+            _cachedTargetId = [tId copy];
+            _cachedTargetName = [tName copy];
+            _cachedIsTextEditor = isEd;
+            pthread_mutex_unlock(&_lock);
+            notifyFocus(tId, tName);
+        }
         return event;
     }
     // Also ignore fallback modifier combinations if pressed
     if ((isCmd || isCtrl) && isAlt && (keyCode == kVK_ANSI_X || keyCode == kVK_ANSI_Z)) {
         return event;
+    }
+
+    // Check for Undo hotkey in Review Mode: Cmd + Z
+    if (isCmd && !isShift && !isAlt && !isCtrl && keyCode == kVK_ANSI_Z) {
+        uint64_t now = getNowMs();
+        static uint64_t lastUndoNotifyMs = 0;
+        if (now - lastUndoNotifyMs > 300) {
+            lastUndoNotifyMs = now;
+            NSString *targetId = @"terminal";
+            NSString *targetName = @"Terminal";
+            BOOL isTextEditor = NO;
+            if (checkIfForegroundIsTarget(&targetId, &targetName, &isTextEditor)) {
+                notifyAction(targetId, targetName, @"undo");
+            } else if (checkIfForegroundIsGC()) {
+                notifyAction(_activeTargetId ?: @"terminal", _activeTargetName ?: @"Terminal", @"undo");
+            }
+        }
     }
 
     pthread_mutex_lock(&_lock);
@@ -424,8 +493,8 @@ static CGEventRef eventTapCallback(CGEventTapProxy proxy, CGEventType type, CGEv
         return event;
     }
 
-    // Check if active target switched
-    if (![_activeTargetId isEqualToString:targetId]) {
+    // Check if active target switched (by ID or target application name)
+    if (![_activeTargetId isEqualToString:targetId] || ![_activeTargetName isEqualToString:targetName]) {
         _activeTargetId = [targetId copy];
         _activeTargetName = [targetName copy];
         _activeIsTextEditor = isTextEditor;
@@ -442,10 +511,7 @@ static CGEventRef eventTapCallback(CGEventTapProxy proxy, CGEventType type, CGEv
     // COMMAND SHORTCUTS (macOS Cmd key held)
     // -------------------------------------------------------------
     if (isCmd) {
-        if (keyCode == kVK_ANSI_Z && !isShift && !isAlt && !isCtrl) {
-            // Cmd + Z: Undo action in Review Mode
-            notifyAction(targetId, targetName, @"undo");
-        } else if (keyCode == kVK_ANSI_V) {
+        if (keyCode == kVK_ANSI_V) {
             // Cmd + V: Paste
             pthread_mutex_unlock(&_lock);
             applyPasteForTarget(targetId, targetName, isTextEditor);
@@ -762,6 +828,26 @@ int main(int argc, const char * argv[]) {
             CFRunLoopSourceRef runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0);
             CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, kCFRunLoopCommonModes);
             CGEventTapEnable(eventTap, true);
+        }
+
+        // Detect initially frontmost application on startup
+        NSRunningApplication *initApp = [[NSWorkspace sharedWorkspace] frontmostApplication];
+        NSString *initTId = nil;
+        NSString *initTName = nil;
+        BOOL initIsEd = NO;
+        if (classifyForegroundTarget(initApp, &initTId, &initTName, &initIsEd)) {
+            pthread_mutex_lock(&_lock);
+            _activeTargetId = [initTId copy];
+            _activeTargetName = [initTName copy];
+            _activeIsTextEditor = initIsEd;
+            _cachedPid = [initApp processIdentifier];
+            _cachedTimeMs = getNowMs();
+            _cachedIsTarget = YES;
+            _cachedTargetId = [initTId copy];
+            _cachedTargetName = [initTName copy];
+            _cachedIsTextEditor = initIsEd;
+            pthread_mutex_unlock(&_lock);
+            notifyFocus(initTId, initTName);
         }
 
         // Observe foreground app activations to immediately notify focus switches

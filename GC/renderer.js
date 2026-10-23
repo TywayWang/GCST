@@ -3,13 +3,23 @@ const { ipcRenderer } = require('electron');
 // Target identification
 const urlParams = new URLSearchParams(window.location.search);
 const currentTargetId = urlParams.get('target') || 'terminal';
-const currentTargetName = urlParams.get('name') || (currentTargetId === 'notes' ? 'Notes' : (currentTargetId === 'textedit' ? 'TextEdit' : 'Terminal'));
+let currentTargetName = urlParams.get('name') || (currentTargetId === 'notes' ? 'Notes' : (currentTargetId === 'textedit' ? 'TextEdit' : 'Terminal'));
 
 document.title = `GC // ${currentTargetName}`;
 
 const isMac = process.platform === 'darwin';
 const copyShortcutDesc = isMac ? 'Shift+Cmd+X' : 'Ctrl+Alt+X';
 const checkShortcutDesc = isMac ? 'Shift+Cmd+Z' : 'Ctrl+Alt+Z';
+
+function updateCurrentTargetName(name) {
+  if (!name || name === currentTargetName) return;
+  currentTargetName = name;
+  document.title = `GC // ${currentTargetName}`;
+  if (stageLabel && !isDirectInputActive && !isReviewMode) {
+    stageLabel.textContent = currentTargetName;
+    stageLabel.title = `Tracking ${currentTargetName} (Press ${copyShortcutDesc} to type directly in GC)`;
+  }
+}
 
 // DOM Elements
 const hudContainer = document.getElementById('hudContainer');
@@ -106,6 +116,7 @@ let savedReviewIssues = [];
 let savedReviewCorrectedText = '';
 let isCorrectionsUndone = false;
 let isReviewMode = false;
+let lastUndoKeyTime = 0;
 let audioCtx = null;
 
 // Lightweight Web Audio feedback
@@ -160,8 +171,8 @@ if (btnClose) {
 window.addEventListener('keydown', (e) => {
   // Check Hotkey inside window: Win: Ctrl+Alt+Z / Mac: Shift+Cmd+Z
   const isCheckHotkey = isMac
-    ? (e.metaKey && e.shiftKey && (e.key === 'z' || e.key === 'Z'))
-    : (e.ctrlKey && e.altKey && (e.key === 'z' || e.key === 'Z'));
+    ? (e.metaKey && e.shiftKey && (e.key === 'z' || e.key === 'Z' || e.code === 'KeyZ'))
+    : (e.ctrlKey && e.altKey && (e.key === 'z' || e.key === 'Z' || e.code === 'KeyZ'));
 
   if (isCheckHotkey) {
     e.preventDefault();
@@ -176,20 +187,24 @@ window.addEventListener('keydown', (e) => {
 
   // Undo Hotkey inside window: Win: Ctrl+Z / Mac: Cmd+Z (revert to original inputs during review)
   const isUndoHotkey = isMac
-    ? (e.metaKey && !e.shiftKey && !e.altKey && (e.key === 'z' || e.key === 'Z'))
-    : (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'z' || e.key === 'Z'));
+    ? (e.metaKey && !e.shiftKey && !e.altKey && (e.key === 'z' || e.key === 'Z' || e.code === 'KeyZ'))
+    : (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'z' || e.key === 'Z' || e.code === 'KeyZ'));
 
   if (isUndoHotkey && isReviewMode) {
     e.preventDefault();
     e.stopPropagation();
-    ipcRenderer.send('undo-corrections', { targetId: currentTargetId });
+    const now = Date.now();
+    if (now - lastUndoKeyTime > 300) {
+      lastUndoKeyTime = now;
+      ipcRenderer.send('undo-corrections', { targetId: currentTargetId });
+    }
     return;
   }
 
   // Copy Hotkey inside window: Win: Ctrl+Alt+X / Mac: Shift+Cmd+X
   const isCopyHotkey = isMac
-    ? (e.metaKey && e.shiftKey && (e.key === 'x' || e.key === 'X'))
-    : (e.ctrlKey && e.altKey && (e.key === 'x' || e.key === 'X'));
+    ? (e.metaKey && e.shiftKey && (e.key === 'x' || e.key === 'X' || e.code === 'KeyX'))
+    : (e.ctrlKey && e.altKey && (e.key === 'x' || e.key === 'X' || e.code === 'KeyX'));
 
   if (isCopyHotkey) {
     e.preventDefault();
@@ -725,6 +740,9 @@ function renderInlineReview(originalText, correctedText, issues) {
 // -------------------------------------------------------------
 ipcRenderer.on('focus-input-mode', (event, data) => {
   if (data && data.targetId && data.targetId !== currentTargetId) return;
+  if (data && data.targetName) {
+    updateCurrentTargetName(data.targetName);
+  }
   hudContainer.classList.add('visible');
   focusDirectInput();
   playPopSound();
@@ -732,6 +750,9 @@ ipcRenderer.on('focus-input-mode', (event, data) => {
 
 ipcRenderer.on('window-popped', (event, data) => {
   if (data && data.targetId && data.targetId !== currentTargetId) return;
+  if (data && data.targetName) {
+    updateCurrentTargetName(data.targetName);
+  }
   hudContainer.classList.add('visible');
   playPopSound();
 });
@@ -744,6 +765,9 @@ ipcRenderer.on('window-closed', (event, data) => {
 
 ipcRenderer.on('typing-update', (event, data) => {
   if (data && data.targetId && data.targetId !== currentTargetId) return;
+  if (data && data.targetName) {
+    updateCurrentTargetName(data.targetName);
+  }
   const { text, length, words } = data;
 
   // If user is actively typing directly inside GC editor, ignore external stream
@@ -839,11 +863,7 @@ ipcRenderer.on('correction-result', (event, result) => {
     const count = currentIssues.length;
     setReviewedModeUI(true); // Has corrections: blue-ish arrow
     if (correctionBadge) {
-      if (dialectKey === 'en-CN') {
-        correctionBadge.textContent = `[✓ ${count} Chinglish Expression${count === 1 ? '' : 's'}]`;
-      } else {
-        correctionBadge.textContent = `[✓ ${count} ${adj} Correction${count === 1 ? '' : 's'}]`;
-      }
+      correctionBadge.textContent = `[${count} Correction${count === 1 ? '' : 's'}]`;
       correctionBadge.className = 'correction-badge-btn corrected';
     }
 

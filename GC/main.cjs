@@ -13,11 +13,13 @@ if (!gotTheLock) {
 
 const WINDOW_WIDTH = 584;
 const WINDOW_HEIGHT = 544;
+const isMac = process.platform === 'darwin';
 
 class TargetInstance {
   constructor(targetId, targetName) {
     this.targetId = targetId;
     this.targetName = targetName;
+    this.linkedAppName = targetName;
     this.window = null;
     this.isHoveringWindowPopped = false;
     this.isReviewMode = false;
@@ -176,6 +178,42 @@ function createTargetWindow(targetId, targetName) {
   if (process.platform === 'darwin') {
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   }
+
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return;
+
+    const isMac = process.platform === 'darwin';
+    const isUndo = (isMac ? input.meta : input.control) &&
+                   !input.alt && !input.shift &&
+                   (input.key.toLowerCase() === 'z' || input.code === 'KeyZ');
+    if (isUndo) {
+      const inst = targetInstances.get(targetId);
+      if (inst && inst.isReviewMode) {
+        event.preventDefault();
+        handleUndoHotkey(targetId);
+        return;
+      }
+    }
+
+    const isCheck = (isMac ? (input.meta && input.shift) : (input.control && input.alt)) &&
+                    (input.key.toLowerCase() === 'z' || input.code === 'KeyZ');
+    if (isCheck) {
+      const inst = targetInstances.get(targetId);
+      if (inst && !inst.isReviewMode) {
+        event.preventDefault();
+        handleCheckHotkey(targetId);
+        return;
+      }
+    }
+
+    const isCopy = (isMac ? (input.meta && input.shift) : (input.control && input.alt)) &&
+                   (input.key.toLowerCase() === 'x' || input.code === 'KeyX');
+    if (isCopy) {
+      event.preventDefault();
+      handleHotkey();
+      return;
+    }
+  });
 
   win.on('focus', () => {
     activeTargetId = targetId;
@@ -345,6 +383,11 @@ function showAndFocusForDirectInput(targetId) {
     inst.window = createTargetWindow(targetId, inst.targetName);
   }
 
+  // Preserve the linked application that was active before direct GC editor was opened
+  if (inst.targetName && inst.targetName !== 'GC') {
+    inst.linkedAppName = inst.targetName;
+  }
+
   activeTargetId = targetId;
   inst.isHoveringWindowPopped = true;
   inst.isReviewMode = false;
@@ -365,7 +408,7 @@ function pasteToLinkedApp(targetId) {
   const isMac = process.platform === 'darwin';
   if (isMac) {
     const inst = targetInstances.get(targetId);
-    const targetName = (inst && inst.targetName) || (targetId === 'notes' ? 'Notes' : (targetId === 'textedit' ? 'TextEdit' : 'Terminal'));
+    const targetName = (inst && (inst.linkedAppName || inst.targetName)) || (targetId === 'notes' ? 'Notes' : (targetId === 'textedit' ? 'TextEdit' : 'Terminal'));
     pasteToTargetMac(targetName);
   } else {
     if (keyMonitor) {
@@ -377,9 +420,43 @@ function pasteToLinkedApp(targetId) {
 function pasteToTargetMac(appName) {
   const { exec } = require('child_process');
   const appleScript = `
-    tell application "${appName}" to activate
-    delay 0.08
-    tell application "System Events" to keystroke "v" using command down
+    tell application "System Events"
+      set targetApp to "${appName}"
+      set targetProc to missing value
+
+      -- 1. Try matching the requested app process directly if running
+      if targetApp is not "" and targetApp is not "Terminal" then
+        set foundProcs to (every process whose name is targetApp)
+        if (count of foundProcs) > 0 then
+          set targetProc to first item of foundProcs
+        end if
+      end if
+
+      -- 2. If target was generic Terminal or process wasn't found, check running terminals
+      if targetProc is missing value then
+        if targetApp is "Terminal" and (exists (first process whose name is "Terminal")) then
+          set targetProc to first process whose name is "Terminal"
+        else
+          set candidateTerms to {"alacritty", "Alacritty", "iTerm2", "iTerm", "Warp", "kitty", "wezterm-gui", "wezterm", "ghostty", "CyberTerminal"}
+          repeat with termName in candidateTerms
+            set candidateProcs to (every process whose name is (termName as string))
+            if (count of candidateProcs) > 0 then
+              set targetProc to first item of candidateProcs
+              exit repeat
+            end if
+          end repeat
+        end if
+      end if
+
+      -- 3. If a target process was found, bring it to front without launching closed apps
+      if targetProc is not missing value then
+        set frontmost of targetProc to true
+        delay 0.08
+      end if
+
+      -- 4. Send paste keystroke
+      keystroke "v" using command down
+    end tell
   `;
   exec(`osascript -e '${appleScript.replace(/'/g, "'\\''")}'`, (err) => {
     if (err) console.error('[GC] Error pasting to Mac target:', err);
@@ -502,8 +579,17 @@ function unregisterReviewUndoShortcut() {
   isUndoShortcutRegistered = false;
 }
 
-function handleUndoHotkey() {
-  let targetInst = targetInstances.get(activeTargetId);
+let lastUndoHotkeyTime = 0;
+
+function handleUndoHotkey(targetIdOverride = null) {
+  const now = Date.now();
+  if (now - lastUndoHotkeyTime < 300) {
+    return; // Cooldown: prevent concurrent duplicate triggers from multiple handlers
+  }
+  lastUndoHotkeyTime = now;
+
+  const targetId = targetIdOverride || activeTargetId;
+  let targetInst = targetInstances.get(targetId);
   if (!targetInst || !targetInst.isHoveringWindowPopped || !targetInst.isReviewMode) {
     for (const inst of targetInstances.values()) {
       if (inst.isHoveringWindowPopped && inst.isReviewMode) {
@@ -625,6 +711,7 @@ async function triggerOllamaCorrection(targetId, text) {
 
       inst.savedCorrectedText = safeCorrected;
       inst.currentCorrectedText = safeCorrected;
+      inst.currentIssues = result.issues || [];
       inst.isCorrectionsUndone = false;
       if (inst.window && !inst.window.isDestroyed()) {
         inst.window.webContents.send('correction-result', {
@@ -907,6 +994,48 @@ app.whenReady().then(async () => {
 
   createTray();
 
+  // Configure application menu with review-aware Undo/Redo handling
+  const menuTemplate = [
+    ...(isMac ? [{
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' }
+      ]
+    }] : []),
+    {
+      label: 'Edit',
+      submenu: [
+        {
+          label: 'Undo',
+          accelerator: 'CmdOrCtrl+Z',
+          click: () => {
+            if (isAnyWindowInReview()) {
+              handleUndoHotkey();
+            } else {
+              const focused = BrowserWindow.getFocusedWindow();
+              if (focused) focused.webContents.undo();
+            }
+          }
+        },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' }
+      ]
+    }
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate));
+
   // Initialize KeyMonitor
   try {
     keyMonitor = new KeyMonitorManager();
@@ -957,7 +1086,7 @@ app.whenReady().then(async () => {
         // In Terminal, Enter submits prompt -> dismiss that target's hovering window
         hideHoveringWindow(target || 'terminal');
       } else if (action === 'undo') {
-        handleUndoHotkey();
+        handleUndoHotkey(target);
       }
     });
 
@@ -989,7 +1118,6 @@ app.whenReady().then(async () => {
   // Register Global Hotkeys
   // macOS: Shift + Command + X & Shift + Command + Z
   // Windows: Ctrl + Alt + X & Ctrl + Alt + Z
-  const isMac = process.platform === 'darwin';
   const hotkeyX = isMac ? 'Command+Shift+X' : 'CommandOrControl+Alt+X';
   const hotkeyZ = isMac ? 'Command+Shift+Z' : 'CommandOrControl+Alt+Z';
 
@@ -1056,8 +1184,9 @@ app.whenReady().then(async () => {
     }
   });
 
-  ipcMain.on('undo-corrections', () => {
-    handleUndoHotkey();
+  ipcMain.on('undo-corrections', (event, data) => {
+    const targetId = (data && data.targetId) || findTargetBySender(event.sender)?.targetId;
+    handleUndoHotkey(targetId);
   });
 
   ipcMain.on('update-corrected-text', (event, data) => {

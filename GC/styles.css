@@ -174,10 +174,10 @@ textarea,
 }
 
 .stage-label.input-label.direct-gc {
-  color: #38bdf8;
-  background: rgba(56, 189, 248, 0.12);
-  border-color: rgba(56, 189, 248, 0.35);
-  box-shadow: 0 0 8px rgba(56, 189, 248, 0.2);
+  color: #ffffff;
+  background: transparent;
+  border: 1px solid transparent;
+  box-shadow: none;
 }
 
 /* Review mode: Input is dimmed */
