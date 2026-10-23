@@ -1,0 +1,24 @@
+{
+  "name": "gc-british-grammar-checker",
+  "version": "1.0.0",
+  "description": "GC - Real-time British English Grammar & Spell Checker powered by local Gemma 4 via Ollama",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "build-mac-hook": "clang -O2 -framework Cocoa -framework ApplicationServices -framework Carbon src/KeyMonitor_mac.m -o bin/KeyMonitor_mac && chmod +x bin/KeyMonitor_mac",
+    "compile-hook": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe /target:exe /out:bin\\KeyMonitor.exe /r:System.Windows.Forms.dll src\\KeyMonitor.cs"
+  },
+  "keywords": [
+    "grammar-checker",
+    "spell-checker",
+    "british-english",
+    "gemma4",
+    "ollama",
+    "electron"
+  ],
+  "author": "Dr. TywayWang",
+  "license": "MIT",
+  "dependencies": {
+    "electron": "^44.7.0"
+  }
+}

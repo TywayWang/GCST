@@ -1,0 +1,23 @@
+{
+  "name": "gcst-suite",
+  "version": "1.0.0",
+  "description": "GCST - Unified British English Grammar & Spell Checker (GC) and On-Screen Hover Translator (ST) Desktop Suite",
+  "scripts": {
+    "start": "node scripts/start.cjs All",
+    "start:gc": "node scripts/start.cjs GC",
+    "start:st": "node scripts/start.cjs ST",
+    "stop": "node scripts/stop.cjs All",
+    "stop:gc": "node scripts/stop.cjs GC",
+    "stop:st": "node scripts/stop.cjs ST"
+  },
+  "keywords": [
+    "gcst",
+    "grammar-checker",
+    "hover-translator",
+    "british-english",
+    "gemma4",
+    "ollama"
+  ],
+  "author": "Dr. TywayWang",
+  "license": "MIT"
+}

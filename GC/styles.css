@@ -1,0 +1,1049 @@
+:root {
+  --bg-hud: #151518;
+  --bg-panel: #151518;
+  --bg-card: #151518;
+  --bg-capsule: transparent;
+  --bg-capsule-hover: rgba(255, 255, 255, 0.08);
+
+  --text-main: #f4f4f5;
+  --text-muted: #a1a1aa;
+  --text-dim: #71717a;
+  --text-faint: #52525b;
+
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-card: transparent;
+  --border-focus: transparent;
+
+  --accent-green: #22c55e;
+  --accent-blue: #3b82f6;
+  --accent-red: #ef4444;
+  --accent-amber: #f59e0b;
+
+  --radius-hud: 14px;
+  --radius-card: 8px;
+  --radius-capsule: 14px;
+  --capsule-height: 28px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  user-select: none;
+}
+
+body {
+  background: transparent;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  color: var(--text-main);
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 0;
+}
+
+/* Floating HUD Container */
+.hovering-hud {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-hud);
+  border: none;
+  border-radius: var(--radius-hud);
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  -webkit-app-region: drag; /* Native OS window drag across UI */
+  user-select: none;
+}
+
+/* Explicit no-drag on all interactive controls and editor box */
+button,
+input,
+select,
+textarea,
+.btn-icon,
+.btn-close,
+.bottom-capsule,
+.correction-badge-btn,
+.inline-correction-token,
+.inline-correction-pill,
+.editor-box,
+.text-display-box,
+[contenteditable] {
+  -webkit-app-region: no-drag;
+}
+
+/* Main Content Area */
+.hud-body {
+  flex: 1;
+  padding: 14px 14px 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.hud-section {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.btn-close {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  outline: none;
+  flex-shrink: 0;
+}
+
+.btn-close:hover {
+  background: rgba(239, 68, 68, 0.18);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.btn-close:active {
+  transform: scale(0.92);
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.2px;
+  flex-wrap: nowrap;
+}
+
+.stage-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  user-select: none;
+  transition: color 0.18s ease, opacity 0.18s ease;
+}
+
+/* Input mode: Input is bright, crisp white and interactive */
+.stage-label.input-label {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #ffffff;
+  font-weight: 600;
+  opacity: 1;
+  cursor: pointer;
+  padding: 2px 7px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.18s ease;
+  outline: none;
+}
+
+.stage-label.input-label:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: #38bdf8;
+}
+
+.stage-label.input-label.active {
+  color: #ffffff;
+  font-weight: 600;
+  opacity: 1;
+}
+
+.stage-label.input-label.direct-gc {
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.35);
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.2);
+}
+
+/* Review mode: Input is dimmed */
+.stage-label.input-label.dimmed {
+  color: var(--text-dim);
+  font-weight: 500;
+  opacity: 0.55;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+/* Review mode: Review label is bright */
+.stage-label.review-label {
+  color: #ffffff;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.stage-label.review-label.checking {
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.stage-label.review-label.reviewed {
+  color: #ffffff;
+  font-weight: 600;
+  animation: reviewWordPop 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes reviewWordPop {
+  0% {
+    opacity: 0.6;
+    transform: translateY(1px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.review-stage-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  animation: fadeInReview 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes fadeInReview {
+  from {
+    opacity: 0;
+    transform: translateX(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Antigravity CLI Moving Dots Rectangular Loader */
+.checking-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4px;
+  animation: fadeInIndicator 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes fadeInIndicator {
+  from {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.antigravity-dots-svg {
+  width: 9px;
+  height: 15px;
+  display: block;
+  overflow: visible;
+}
+
+.ag-dot {
+  fill: #38bdf8;
+  opacity: 1;
+}
+
+/* 4x2 matrix: single missing dot rotating clockwise around the perimeter */
+.ag-dot.ag-cw-1,
+.ag-dot.ag-cw-2,
+.ag-dot.ag-cw-3,
+.ag-dot.ag-cw-4,
+.ag-dot.ag-cw-5,
+.ag-dot.ag-cw-6,
+.ag-dot.ag-cw-7,
+.ag-dot.ag-cw-8 {
+  animation-name: agyDotOneMissingCW;
+  animation-duration: 0.56s;
+  animation-timing-function: step-end;
+  animation-iteration-count: infinite;
+}
+
+/* Clockwise phase offsets producing a single missing dot moving CW */
+.ag-dot.ag-cw-1 { animation-delay: 0.00s; }  /* Top-Left: missing at t = 0.00s */
+.ag-dot.ag-cw-2 { animation-delay: -0.49s; } /* Top-Right: missing at t = 0.07s */
+.ag-dot.ag-cw-3 { animation-delay: -0.42s; } /* Upper-Mid-Right: missing at t = 0.14s */
+.ag-dot.ag-cw-4 { animation-delay: -0.35s; } /* Lower-Mid-Right: missing at t = 0.21s */
+.ag-dot.ag-cw-5 { animation-delay: -0.28s; } /* Bottom-Right: missing at t = 0.28s */
+.ag-dot.ag-cw-6 { animation-delay: -0.21s; } /* Bottom-Left: missing at t = 0.35s */
+.ag-dot.ag-cw-7 { animation-delay: -0.14s; } /* Lower-Mid-Left: missing at t = 0.42s */
+.ag-dot.ag-cw-8 { animation-delay: -0.07s; } /* Upper-Mid-Left: missing at t = 0.49s */
+
+@keyframes agyDotOneMissingCW {
+  0%, 12.49% {
+    opacity: 0;
+  }
+  12.5%, 100% {
+    opacity: 1;
+  }
+}
+
+.header-arrow {
+  font-size: 11px;
+  color: var(--text-dim);
+  user-select: none;
+  opacity: 0.75;
+  display: inline-flex;
+  align-items: center;
+}
+
+.stage-transition-arrow {
+  color: #38bdf8; /* Vibrant sky cyan highlighting stage transition */
+  opacity: 1;
+  font-weight: 700;
+  text-shadow: 0 0 8px rgba(56, 189, 248, 0.45);
+}
+
+/* Result transition arrow (green if clean, blue-ish if corrections exist) */
+.result-transition-arrow {
+  font-size: 11px;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  transition: color 0.2s ease, text-shadow 0.2s ease;
+  animation: resultArrowPopIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes resultArrowPopIn {
+  from {
+    opacity: 0;
+    transform: translateX(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.result-transition-arrow.arrow-green {
+  color: #4ade80; /* Green colour when nothing to correct */
+  opacity: 1;
+  font-weight: 700;
+  text-shadow: 0 0 8px rgba(74, 222, 128, 0.45);
+}
+
+.result-transition-arrow.arrow-blue {
+  color: #38bdf8; /* Blue-ish colour when there are corrections */
+  opacity: 1;
+  font-weight: 700;
+  text-shadow: 0 0 8px rgba(56, 189, 248, 0.45);
+}
+
+.result-transition-arrow.arrow-error {
+  color: #f87171;
+  opacity: 0.9;
+  font-weight: 700;
+  text-shadow: 0 0 8px rgba(248, 113, 113, 0.45);
+}
+
+.result-transition-arrow.arrow-gray {
+  color: #a1a1aa;
+  opacity: 0.9;
+  font-weight: 700;
+}
+
+.counter-badge {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  border: none;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+}
+
+/* Review Badge Trigger in Section 2 Header */
+.correction-badge-btn {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  padding: 0;
+  border-radius: 0;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  outline: none;
+  animation: resultBadgePopIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes resultBadgePopIn {
+  from {
+    opacity: 0;
+    transform: translateX(4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.correction-badge-btn:hover {
+  background: transparent;
+  filter: brightness(1.25);
+}
+
+.correction-badge-btn.ready {
+  color: #93c5fd;
+  background: transparent;
+  border: none;
+}
+
+.correction-badge-btn.checking {
+  color: #fcd34d;
+  background: transparent;
+  border: none;
+}
+
+.correction-badge-btn.perfect {
+  color: #86efac;
+  background: transparent;
+  border: none;
+}
+
+.correction-badge-btn.corrected {
+  color: #93c5fd;
+  background: transparent;
+  border: none;
+}
+
+.correction-badge-btn.error {
+  color: #fca5a5;
+  background: transparent;
+  border: none;
+}
+
+.correction-badge-btn.original-restored {
+  color: #a1a1aa;
+  background: transparent;
+  border: none;
+}
+
+/* Selectable Text Display Boxes (Dialogue border removed, unified background) */
+.text-display-box {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 6px 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-main);
+  overflow-y: auto;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.text-display-box:focus {
+  outline: none;
+  border: none;
+}
+
+.editor-section {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.editor-box {
+  flex: 1;
+  min-height: 280px;
+  height: auto;
+  max-height: none;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: #d4d4d8;
+  caret-color: #38bdf8;
+  font-size: 13.5px;
+  line-height: 1.55;
+  padding: 8px 4px 14px 4px;
+  overflow-y: auto;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  transition: line-height 0.38s cubic-bezier(0.2, 0, 0, 1),
+              padding-top 0.38s cubic-bezier(0.2, 0, 0, 1),
+              color 0.25s ease;
+}
+
+.editor-box:focus {
+  outline: none;
+  border: none;
+}
+
+/* Dynamic CSS placeholder for contenteditable */
+.editor-box[data-empty="true"]::before {
+  content: attr(data-placeholder);
+  color: var(--text-faint);
+  font-style: normal;
+  font-size: 11.5px;
+  line-height: 1.6;
+  pointer-events: none;
+  display: block;
+}
+
+/* Expanded Review State (smoothly expands line space to fit corrections) */
+.editor-box.review-expanded {
+  line-height: 3.5; /* Line space increases to give room to fit the corrections */
+  padding-top: 26px; /* Headroom so line 1's pills are well inside the upper border */
+  color: #ffffff;
+}
+
+.placeholder-text {
+  color: var(--text-faint);
+  font-style: normal;
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.placeholder-text strong {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.placeholder-text.review-checking {
+  color: var(--accent-amber);
+}
+
+/* =============================================================
+   Grammarly-Style Inline / Interlinear Corrections
+   ============================================================= */
+.inline-correction-token {
+  position: relative;
+  display: inline-block;
+  vertical-align: baseline;
+  line-height: 1; /* Reset line-height to prevent ballooning and bring pills lower to the word */
+  cursor: pointer;
+  user-select: text;
+  -webkit-user-select: text;
+  transition: all 0.15s ease;
+}
+
+/* Floating Correction Pill sitting in the generous line spacing above the word */
+.inline-correction-pill {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 2px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #4ade80;
+  background: rgba(34, 197, 94, 0.16);
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  border-radius: 4px;
+  padding: 1px 6px;
+  line-height: 1.25;
+  white-space: nowrap;
+  letter-spacing: 0.2px;
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: auto;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.25);
+  animation: pillPopIn 0.32s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+@keyframes pillPopIn {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(6px) scale(0.85);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+.inline-correction-token:hover .inline-correction-pill {
+  background: rgba(34, 197, 94, 0.28);
+  border-color: rgba(34, 197, 94, 0.6);
+  color: #86efac;
+  transform: translateX(-50%) translateY(-2px);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4);
+}
+
+/* Grammar or Vocabulary badge styling */
+.inline-correction-token.grammar .inline-correction-pill {
+  color: #60a5fa;
+  background: rgba(59, 130, 246, 0.16);
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+.inline-correction-token.grammar:hover .inline-correction-pill {
+  background: rgba(59, 130, 246, 0.28);
+  border-color: rgba(59, 130, 246, 0.6);
+  color: #93c5fd;
+}
+
+.inline-correction-token.vocabulary .inline-correction-pill {
+  color: #c084fc;
+  background: rgba(168, 85, 247, 0.16);
+  border-color: rgba(168, 85, 247, 0.35);
+}
+
+.inline-correction-token.vocabulary:hover .inline-correction-pill {
+  background: rgba(168, 85, 247, 0.28);
+  border-color: rgba(168, 85, 247, 0.6);
+  color: #d8b4fe;
+}
+
+/* The original erroneous word on the text line */
+.inline-original-word {
+  color: #f87171;
+  text-decoration: line-through;
+  text-decoration-color: rgba(248, 113, 113, 0.75);
+  opacity: 0.88;
+  display: inline-block;
+  line-height: 1; /* Reset line-height */
+  white-space: nowrap;
+}
+
+.inline-correction-token:hover .inline-original-word {
+  opacity: 1;
+  color: #ef4444;
+}
+
+/* Accepted state when user clicks on a correction */
+.inline-correction-token.accepted .inline-correction-pill {
+  display: none;
+}
+
+.inline-correction-token.accepted .inline-original-word {
+  color: #4ade80;
+  text-decoration: none;
+  opacity: 1;
+  font-weight: 500;
+}
+
+/* Bottom HUD Footer */
+.hud-footer {
+  height: 48px;
+  padding: 0 14px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-hud);
+  flex-shrink: 0;
+  gap: 8px;
+  box-sizing: border-box;
+}
+
+.footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.footer-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* =============================================================
+   Bottom HUD Footer Controls (Modern, Flat, Non-Capsule Toolbar)
+   ============================================================= */
+.footer-btn {
+  height: 28px;
+  line-height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  box-sizing: border-box;
+  white-space: nowrap;
+  vertical-align: middle;
+  outline: none;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+  user-select: none;
+  -webkit-app-region: no-drag;
+  cursor: pointer;
+}
+
+.btn-hotkey-name {
+  font-size: 11.5px;
+  font-weight: 550;
+  color: var(--text-muted);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Dialect button row & arrow */
+.dialect-label-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 3.5px;
+}
+
+.dialect-dropdown-arrow {
+  font-size: 8px;
+  opacity: 0.65;
+  display: inline-block;
+  vertical-align: middle;
+  line-height: 1;
+  transition: opacity 0.15s ease, transform 0.2s ease;
+}
+
+.btn-dialect:hover .dialect-dropdown-arrow {
+  opacity: 1;
+}
+
+.btn-dialect.popover-open .dialect-dropdown-arrow {
+  transform: rotate(180deg);
+  opacity: 1;
+}
+
+/* Review Action Button */
+.btn-review {
+  color: var(--text-main);
+}
+
+.btn-review:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.btn-review:hover .btn-hotkey-name {
+  color: #ffffff;
+}
+
+.btn-review:active {
+  background: rgba(255, 255, 255, 0.14);
+  transform: translateY(1px);
+}
+
+/* Copy Action Button */
+.btn-copy {
+  color: var(--text-main);
+}
+
+.btn-copy:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.btn-copy:hover .btn-hotkey-name {
+  color: #ffffff;
+}
+
+.btn-copy:active {
+  background: rgba(255, 255, 255, 0.14);
+  transform: translateY(1px);
+}
+
+.btn-copy.copied {
+  background: rgba(34, 197, 94, 0.14);
+}
+
+.btn-copy.copied .btn-hotkey-name {
+  color: #4ade80;
+}
+
+/* Undo Action Button (Revert corrections to original input) */
+.btn-undo {
+  color: var(--text-main);
+}
+
+.btn-undo:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.btn-undo:hover .btn-hotkey-name {
+  color: #ffffff;
+}
+
+.btn-undo:active {
+  background: rgba(255, 255, 255, 0.14);
+  transform: translateY(1px);
+}
+
+.btn-undo.undone {
+  background: rgba(245, 158, 11, 0.14);
+}
+
+.btn-undo.undone .btn-hotkey-name {
+  color: #fbbf24;
+}
+
+.btn-undo:hover .hotkey-pill {
+  color: #ffffff;
+  text-shadow: 0 0 6px rgba(255, 255, 255, 0.45);
+}
+
+/* Clear Action Button (Bin Icon placed at right side of latency) */
+.btn-clear {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--text-dim);
+}
+
+.btn-clear:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+}
+
+.btn-clear:active {
+  background: rgba(239, 68, 68, 0.2);
+  transform: translateY(1px);
+}
+
+/* Model Selector Button */
+.meta-engine {
+  max-width: 165px;
+  color: var(--text-muted);
+  font-weight: 450;
+  padding: 0 6px;
+}
+
+.meta-engine:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-main);
+}
+
+.meta-engine:active {
+  background: rgba(255, 255, 255, 0.14);
+  transform: translateY(1px);
+}
+
+#activeModelLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Enlarge the arrow of opening the drop-menu for model selection, and rotate it upwards */
+.model-dropdown-arrow {
+  font-size: 9.5px;
+  opacity: 0.65;
+  margin-left: 4px;
+  display: inline-block;
+  vertical-align: middle;
+  line-height: 1;
+  transition: opacity 0.15s ease, transform 0.2s ease;
+}
+
+.meta-engine:hover .model-dropdown-arrow {
+  opacity: 1;
+}
+
+.meta-engine.popover-open .model-dropdown-arrow {
+  transform: rotate(180deg);
+  opacity: 1;
+}
+
+/* Model Switcher Popover */
+.model-popover {
+  position: absolute;
+  bottom: 56px;
+  left: 125px;
+  right: auto;
+  width: 250px;
+  max-height: 290px;
+  background: #1c1c21;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 1000;
+  -webkit-app-region: no-drag;
+  animation: popoverFadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Dialect Switcher Popover (Positioned on the bottom-left above dialect button) */
+.dialect-popover {
+  left: 14px;
+  right: auto;
+  width: 255px;
+}
+
+.dialect-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5px;
+  text-align: left;
+}
+
+.dialect-code {
+  font-weight: 600;
+  font-size: 11.5px;
+  color: var(--text-main);
+}
+
+.dialect-desc {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+@keyframes popoverFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.model-popover-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.model-popover-close {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+  line-height: 1;
+}
+
+.model-popover-close:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.model-list {
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  max-height: 230px;
+}
+
+.model-item {
+  width: 100%;
+  padding: 7px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-main);
+  font-size: 11.5px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+  outline: none;
+}
+
+.model-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.model-item.active {
+  background: rgba(59, 130, 246, 0.16);
+  border-color: rgba(59, 130, 246, 0.4);
+  color: #93c5fd;
+  font-weight: 550;
+}
+
+.model-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-item-check {
+  font-weight: 700;
+  font-size: 12px;
+  color: #60a5fa;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
+.meta-latency {
+  color: var(--text-dim);
+  font-size: 11px;
+  min-width: 38px;
+  height: 28px;
+  line-height: 28px;
+  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  padding: 0 4px;
+}
+
+/* Hotkey Pills inside Action Buttons (Reverted to horizontal inline, made brighter) */
+.hotkey-pill {
+  font-size: 10.5px;
+  font-weight: 600;
+  background: transparent;
+  border: none;
+  padding: 0;
+  border-radius: 0;
+  color: #ffffff; /* Brighter hotkey combinations as requested! */
+  line-height: 1;
+  letter-spacing: 0.2px;
+  margin-left: 2px;
+}
+
+.btn-review:hover .hotkey-pill,
+.btn-copy:hover .hotkey-pill {
+  color: #ffffff;
+  text-shadow: 0 0 6px rgba(255, 255, 255, 0.45);
+}

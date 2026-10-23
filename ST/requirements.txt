@@ -1,0 +1,7 @@
+# Windows 11 dependencies for ST
+PyQt6>=6.6.0
+pynput>=1.7.6
+uiautomation>=2.0.20
+pywin32>=306; sys_platform == 'win32'
+requests>=2.31.0
+httpx>=0.27.0

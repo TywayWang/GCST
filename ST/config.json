@@ -1,0 +1,9 @@
+{
+  "model": "gemma4:e4b",
+  "hover_delay": 0.35,
+  "move_dismiss_radius": 100.0,
+  "source_mode": "Auto",
+  "source_lang": "English",
+  "target_mode": "Manual",
+  "target_lang": "Chinese"
+}

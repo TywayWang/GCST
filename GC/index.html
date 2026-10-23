@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GC // British English Editor</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="hovering-hud" id="hudContainer">
+    <!-- Main Content Area: Unified Input & Review Editor -->
+    <main class="hud-body">
+      <section class="hud-section editor-section">
+        <div class="section-header">
+          <div class="section-title">
+            <button class="stage-label input-label active" id="stageLabel" title="Click to choose where to type (GC Editor or Terminal)">Terminal</button>
+            <span class="header-arrow">←</span>
+            <span class="counter-badge" id="typingCounter">[0 words (0 ch)]</span>
+            <div class="review-stage-group" id="reviewStageGroup" style="display: none;">
+              <span class="header-arrow stage-transition-arrow" id="firstReviewArrow">←</span>
+              <span class="stage-label review-label" id="reviewTag">Checking</span>
+              <span class="checking-indicator antigravity-loader" id="checkingIndicator" style="display: none;" title="Checking grammar with local LLM...">
+                <svg class="antigravity-dots-svg" width="9" height="15" viewBox="0 0 9 15">
+                  <!-- Row 1: Col 1, Col 2 -->
+                  <circle cx="2.35" cy="2.2" r="1.25" class="ag-dot ag-cw-1" />
+                  <circle cx="6.65" cy="2.2" r="1.25" class="ag-dot ag-cw-2" />
+
+                  <!-- Row 2: Col 1, Col 2 -->
+                  <circle cx="2.35" cy="5.8" r="1.25" class="ag-dot ag-cw-8" />
+                  <circle cx="6.65" cy="5.8" r="1.25" class="ag-dot ag-cw-3" />
+
+                  <!-- Row 3: Col 1, Col 2 -->
+                  <circle cx="2.35" cy="9.4" r="1.25" class="ag-dot ag-cw-7" />
+                  <circle cx="6.65" cy="9.4" r="1.25" class="ag-dot ag-cw-4" />
+
+                  <!-- Row 4: Col 1, Col 2 -->
+                  <circle cx="2.35" cy="13.0" r="1.25" class="ag-dot ag-cw-6" />
+                  <circle cx="6.65" cy="13.0" r="1.25" class="ag-dot ag-cw-5" />
+                </svg>
+              </span>
+              <span class="header-arrow result-transition-arrow" id="lastReviewArrow" style="display: none;">←</span>
+              <button class="correction-badge-btn" id="correctionBadge" style="display: none;" title="Press Ctrl+Alt+Z or click to review">
+                [✓]
+              </button>
+            </div>
+          </div>
+          <button class="btn-icon btn-close" id="btnClose" title="Close Window (reopen from tray icon anytime)">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+        <div class="text-display-box editor-box" id="editorTextBox" tabindex="0" contenteditable="plaintext-only" spellcheck="false" data-empty="true" data-placeholder="Type directly in GC or in Terminal, CyberTerminal, Notepad..." title="Type directly here or review corrections"></div>
+      </section>
+    </main>
+
+    <!-- Bottom HUD Footer -->
+    <footer class="hud-footer">
+      <div class="footer-actions">
+        <!-- English Check Function Selector & Review Trigger (Reverted to inline horizontal layout) -->
+        <button class="footer-btn btn-review btn-dialect" id="btnCheckHotkey" title="Click to choose English check mode (Ctrl+Alt+Z to review)">
+          <span class="btn-hotkey-name" id="btnCheckText">en-GB</span>
+          <span class="dialect-dropdown-arrow">▲</span>
+          <span class="hotkey-pill" id="hotkeyCheckPill">Ctrl+Alt+Z</span>
+        </button>
+
+        <!-- Undo Action (Ctrl + Z for Win / Cmd + Z for Mac) - Visible in Review Mode -->
+        <button class="footer-btn btn-undo" id="btnUndoHotkey" style="display: none;" title="Undo corrections and return to input mode (Ctrl+Z / Cmd+Z)">
+          <span class="btn-hotkey-name" id="btnUndoText">Undo</span>
+          <span class="hotkey-pill" id="hotkeyUndoPill">Ctrl+Z</span>
+        </button>
+
+        <!-- Copy Action (Ctrl + Alt + X - Reverted to inline horizontal layout) -->
+        <button class="footer-btn btn-copy" id="btnCopyHotkey" title="Copy corrected text and auto-paste into linked app (Ctrl+Alt+X)">
+          <span class="btn-hotkey-name" id="btnCopyText">Copy</span>
+          <span class="hotkey-pill">Ctrl+Alt+X</span>
+        </button>
+
+        <!-- Model Selector (Clickable to switch between locally deployed models) -->
+        <button class="footer-btn meta-engine" id="btnModelSelector" title="Click to switch between locally deployed models">
+          <span id="activeModelLabel">Local Gemma 4</span>
+          <span class="model-dropdown-arrow">▲</span>
+        </button>
+
+        <!-- Latency Display -->
+        <div class="meta-latency" id="metaLatency" title="Inference Latency">
+          <span>-- ms</span>
+        </div>
+      </div>
+
+      <div class="footer-meta">
+        <!-- Clear Action (Only the bin icon remains at the right side) -->
+        <button class="footer-btn btn-clear" id="btnClear" title="Clear current buffer">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+        </button>
+      </div>
+    </footer>
+
+    <!-- Dialect / Check Mode Switcher Popover -->
+    <div class="model-popover dialect-popover" id="dialectPopover" style="display: none;">
+      <div class="model-popover-header">
+        <span>Check Mode</span>
+        <button class="model-popover-close" id="btnDialectPopoverClose" title="Close">✕</button>
+      </div>
+      <div class="model-list" id="dialectList">
+        <button class="model-item active" data-dialect="en-GB">
+          <div class="dialect-info">
+            <span class="dialect-code">en-GB</span>
+            <span class="dialect-desc">British English (colour, centre)</span>
+          </div>
+          <span class="model-item-check">✓</span>
+        </button>
+        <button class="model-item" data-dialect="en-US">
+          <div class="dialect-info">
+            <span class="dialect-code">en-US</span>
+            <span class="dialect-desc">American English (color, center)</span>
+          </div>
+        </button>
+        <button class="model-item" data-dialect="en-AU">
+          <div class="dialect-info">
+            <span class="dialect-code">en-AU</span>
+            <span class="dialect-desc">Australian English (Aussie idioms)</span>
+          </div>
+        </button>
+        <button class="model-item" data-dialect="en-CN">
+          <div class="dialect-info">
+            <span class="dialect-code">en-CN</span>
+            <span class="dialect-desc">Chinglish (Fun Mode! 人山人海)</span>
+          </div>
+        </button>
+      </div>
+    </div>
+
+    <!-- Model Switcher Popover -->
+    <div class="model-popover" id="modelPopover" style="display: none;">
+      <div class="model-popover-header">
+        <span>Local Models</span>
+        <button class="model-popover-close" id="btnModelPopoverClose" title="Close">✕</button>
+      </div>
+      <div class="model-list" id="modelList">
+        <!-- Dynamically populated Ollama models -->
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

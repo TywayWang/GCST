@@ -1,0 +1,30 @@
+# GCST Unified .gitignore
+
+# Dependencies & Environments
+**/node_modules/
+**/.venv/
+**/venv/
+**/env/
+
+# Python cache & artifacts
+**/__pycache__/
+**/*.py[cod]
+*$py.class
+**/.pytest_cache/
+
+# Build outputs
+**/build/
+**/dist/
+*.egg-info/
+**/*.old.exe
+
+# macOS
+.DS_Store
+*.app/
+!ST/ST.app
+
+# Logs & temp
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
