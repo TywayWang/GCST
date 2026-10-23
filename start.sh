@@ -56,6 +56,7 @@ start_gc() {
 
         echo "  [->] Launching GC..."
         nohup ./node_modules/.bin/electron . >/dev/null 2>&1 &
+        disown
         echo "  [OK] GC launched in background (active in desktop HUD & system tray)."
     )
 }

@@ -228,6 +228,7 @@ public struct TranslationView: View {
                             .foregroundColor(Color(red: 0.39, green: 0.45, blue: 0.55)) // #64748b
                     }
                     .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
                     .fixedSize()
 
                     Menu {
@@ -240,6 +241,7 @@ public struct TranslationView: View {
                             .foregroundColor(Color(red: 0.80, green: 0.84, blue: 0.88)) // #cbd5e1
                     }
                     .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
                     .fixedSize()
                 }
 
@@ -269,6 +271,7 @@ public struct TranslationView: View {
                             .foregroundColor(Color(red: 0.39, green: 0.45, blue: 0.55))
                     }
                     .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
                     .fixedSize()
 
                     Menu {
@@ -281,6 +284,7 @@ public struct TranslationView: View {
                             .foregroundColor(Color(red: 0.80, green: 0.84, blue: 0.88))
                     }
                     .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
                     .fixedSize()
                 }
 
@@ -297,6 +301,7 @@ public struct TranslationView: View {
                         .foregroundColor(Color(red: 0.39, green: 0.45, blue: 0.55))
                 }
                 .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
                 .fixedSize()
 
                 // Latency Label
