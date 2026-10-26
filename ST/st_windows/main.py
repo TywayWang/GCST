@@ -11,6 +11,7 @@ from .text_extractor import TextExtractor
 from .selection_monitor import SelectionMonitor
 from .translation_window import TranslationWindow
 from .tray_app import TrayApp
+from .ipc_server import STIPCServer
 from .config import load_config
 
 class AppCoordinator(QObject):
@@ -47,10 +48,14 @@ class AppCoordinator(QObject):
     def _on_text_ready(self, text: str):
         st_log(f"Coordinator: Showing translation window for '{text[:40]}'")
         self.window.show_translation(text)
+        if hasattr(self.monitor, 'start_esc_listener'):
+            self.monitor.start_esc_listener()
 
     def _on_dismiss_requested(self):
         if self.window.isVisible() and not self.window.is_pinned:
             st_log("Coordinator: Dismissing translation window")
+            if hasattr(self.monitor, 'stop_esc_listener'):
+                self.monitor.stop_esc_listener()
             self.window.dismiss()
 
 
@@ -87,14 +92,27 @@ def main():
     monitor = SelectionMonitor(hover_delay=hover_delay, move_dismiss_radius=move_dismiss_radius)
     coordinator = AppCoordinator(monitor, window)
 
-    tray = TrayApp(app, monitor, window)
-    window.model_changed.connect(tray.on_model_changed_external)
+    # Check standalone mode vs GCST unified suite mode (matching macOS ST behavior)
+    is_standalone = "--standalone" in sys.argv or os.environ.get("ST_STANDALONE") == "1"
+
+    tray = None
+    if is_standalone:
+        tray = TrayApp(app, monitor, window)
+        window.model_changed.connect(tray.on_model_changed_external)
+        st_log("ST running in standalone mode (system tray icon active)")
+    else:
+        st_log("Running in unified GCST suite mode: task tray icon is handled by GCST")
+
+    # Start internal IPC command listener on port 11435 for GCST suite coordination
+    ipc_server = STIPCServer(monitor, window, app, port=11435)
+    ipc_server.start()
 
     monitor.start()
 
     # 1. Console Ctrl+C handler for Windows PowerShell / CMD
     def win32_console_ctrl_handler(ctrl_type):
         st_log(f"Console interrupt event ({ctrl_type}) received. Exiting ST cleanly...")
+        ipc_server.stop()
         monitor.stop()
         window.dismiss()
         QMetaObject.invokeMethod(app, "quit", Qt.ConnectionType.QueuedConnection)
@@ -109,6 +127,7 @@ def main():
     # 2. Python SIGINT signal handler
     def sigint_handler(signum, frame):
         st_log("SIGINT (Ctrl+C) received. Exiting ST cleanly...")
+        ipc_server.stop()
         monitor.stop()
         window.dismiss()
         app.quit()
@@ -123,7 +142,8 @@ def main():
     heartbeat_timer.timeout.connect(lambda: None)
     heartbeat_timer.start(200)
 
-    st_log(f"ST for Windows 11 initialized and running in System Tray (Model: {model_name}, Move-Dismiss: {move_dismiss_radius}px).")
+    mode_desc = "Standalone System Tray" if is_standalone else "Unified GCST Suite"
+    st_log(f"ST for Windows 11 initialized and running in {mode_desc} mode (Model: {model_name}, Move-Dismiss: {move_dismiss_radius}px).")
     sys.exit(app.exec())
 
 if __name__ == "__main__":

@@ -838,6 +838,22 @@ function getTrayIcon(active = false) {
     }
   }
 
+  // Windows 11 & cross-platform: Use the exact same stacked GC-over-ST design as macOS
+  if (process.platform === 'win32') {
+    const icoName = active ? 'gcstTemplateActive.ico' : 'gcstTemplate.ico';
+    const icoPath = path.join(__dirname, 'assets', icoName);
+    if (fs.existsSync(icoPath)) {
+      const img = nativeImage.createFromPath(icoPath);
+      if (!img.isEmpty()) return img;
+    }
+  }
+
+  const templateName = active ? 'gcstTemplateActive.png' : 'gcstTemplate.png';
+  const templatePath = path.join(__dirname, 'assets', templateName);
+  if (fs.existsSync(templatePath)) {
+    return nativeImage.createFromPath(templatePath);
+  }
+
   const iconName = active ? 'gcst-icon-active.png' : 'gcst-icon.png';
   let iconPath = path.join(__dirname, 'assets', iconName);
   if (!fs.existsSync(iconPath)) {

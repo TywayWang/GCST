@@ -828,29 +828,47 @@ namespace GrammarChecker
                 int vkCode = Marshal.ReadInt32(lParam);
                 Keys key = (Keys)vkCode;
 
-                bool isCtrl = (GetKeyState((int)Keys.ControlKey) & 0x80) != 0;
-                bool isAlt = (GetKeyState((int)Keys.Menu) & 0x80) != 0;
-                bool isWin = ((GetKeyState((int)Keys.LWin) & 0x80) != 0) || ((GetKeyState((int)Keys.RWin) & 0x80) != 0);
-
-                // CRITICAL FIX: Any key press while the Windows key is held (e.g. Win + E, Win + R, Win + D)
-                // must NEVER be recorded as typing or trigger GC!
-                if (isWin)
-                {
-                    return CallNextHookEx(_hookID, nCode, wParam, lParam);
-                }
-
-                // Ignore hotkey triggering combinations (e.g. Ctrl + Alt + X or Ctrl + Alt + Z)
-                if (isCtrl && isAlt && (key == Keys.X || key == Keys.Z))
-                {
-                    return CallNextHookEx(_hookID, nCode, wParam, lParam);
-                }
-
-                // Ignore standalone modifiers
-                if (key == Keys.ShiftKey || key == Keys.LShiftKey || key == Keys.RShiftKey ||
+                // 1. Standalone modifiers must immediately pass through without any processing
+                if (key == Keys.LWin || key == Keys.RWin ||
+                    key == Keys.ShiftKey || key == Keys.LShiftKey || key == Keys.RShiftKey ||
                     key == Keys.ControlKey || key == Keys.LControlKey || key == Keys.RControlKey ||
                     key == Keys.Menu || key == Keys.LMenu || key == Keys.RMenu ||
-                    key == Keys.LWin || key == Keys.RWin ||
                     key == Keys.Capital || key == Keys.NumLock || key == Keys.Scroll)
+                {
+                    return CallNextHookEx(_hookID, nCode, wParam, lParam);
+                }
+
+                // 2. Real-time physical modifier state detection using GetAsyncKeyState
+                // (GetKeyState only inspects thread message queue and returns 0 in background hooks)
+                bool isWin = ((GetAsyncKeyState((int)Keys.LWin) & 0x8000) != 0) ||
+                             ((GetAsyncKeyState((int)Keys.RWin) & 0x8000) != 0) ||
+                             ((GetKeyState((int)Keys.LWin) & 0x80) != 0) ||
+                             ((GetKeyState((int)Keys.RWin) & 0x80) != 0);
+
+                bool isCtrl = ((GetAsyncKeyState((int)Keys.ControlKey) & 0x8000) != 0) ||
+                              ((GetAsyncKeyState((int)Keys.LControlKey) & 0x8000) != 0) ||
+                              ((GetAsyncKeyState((int)Keys.RControlKey) & 0x8000) != 0) ||
+                              ((GetKeyState((int)Keys.ControlKey) & 0x80) != 0);
+
+                bool isAlt = ((GetAsyncKeyState((int)Keys.Menu) & 0x8000) != 0) ||
+                             ((GetAsyncKeyState((int)Keys.LMenu) & 0x8000) != 0) ||
+                             ((GetAsyncKeyState((int)Keys.RMenu) & 0x8000) != 0) ||
+                             ((GetKeyState((int)Keys.Menu) & 0x80) != 0);
+
+                bool isShift = ((GetAsyncKeyState((int)Keys.ShiftKey) & 0x8000) != 0) ||
+                               ((GetAsyncKeyState((int)Keys.LShiftKey) & 0x8000) != 0) ||
+                               ((GetAsyncKeyState((int)Keys.RShiftKey) & 0x8000) != 0) ||
+                               ((GetKeyState((int)Keys.ShiftKey) & 0x80) != 0);
+
+                // 3. CRITICAL: Any key pressed while the Windows key is held (e.g. Win + Shift + S, Win + E, Win + R, Win + D)
+                // must NEVER be recorded as typing, must NEVER trigger GC, and must pass through immediately!
+                if (isWin || (key == Keys.S && isShift && (((GetAsyncKeyState((int)Keys.LWin) & 0x8000) != 0) || ((GetAsyncKeyState((int)Keys.RWin) & 0x8000) != 0))))
+                {
+                    return CallNextHookEx(_hookID, nCode, wParam, lParam);
+                }
+
+                // 4. Ignore hotkey triggering combinations (e.g. Ctrl + Alt + X or Ctrl + Alt + Z)
+                if (isCtrl && isAlt && (key == Keys.X || key == Keys.Z))
                 {
                     return CallNextHookEx(_hookID, nCode, wParam, lParam);
                 }
@@ -1004,7 +1022,6 @@ namespace GrammarChecker
                         // -------------------------------------------------------------
                         else
                         {
-                            bool isShift = (GetKeyState((int)Keys.ShiftKey) & 0x80) != 0;
                             // Shift + Insert: Classic terminal paste
                             if (key == Keys.Insert && isShift)
                             {

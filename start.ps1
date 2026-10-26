@@ -96,7 +96,7 @@ if ($Component -in @("All", "ST")) {
         Pop-Location
     } else {
         Start-Process -FilePath $pythonwExe -ArgumentList "-m", "st_windows.main" -WorkingDirectory $stDir -WindowStyle Hidden
-        Write-Host "  [OK] ST launched in background (active in system tray / hover detection)." -ForegroundColor Green
+        Write-Host "  [OK] ST launched in background (active in GCST suite / hover detection)." -ForegroundColor Green
     }
 }
 

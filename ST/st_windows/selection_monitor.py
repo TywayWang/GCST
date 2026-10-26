@@ -39,24 +39,43 @@ class SelectionMonitor(QObject):
         self._lock = threading.Lock()
 
     def start(self):
-        """Starts global mouse and keyboard listeners."""
+        """Starts global mouse listener."""
         self.stop()
-        st_log("SelectionMonitor: Starting mouse and keyboard listeners...")
+        st_log("SelectionMonitor: Starting mouse listener...")
 
         self._mouse_listener = mouse.Listener(
             on_click=self._on_click,
             on_move=self._on_move
         )
-        self._keyboard_listener = keyboard.Listener(
-            on_press=self._on_key_press
-        )
-
         self._mouse_listener.daemon = True
-        self._keyboard_listener.daemon = True
-
         self._mouse_listener.start()
-        self._keyboard_listener.start()
         st_log("SelectionMonitor: Listeners active.")
+
+    def start_esc_listener(self):
+        """Starts keyboard listener only while the translation panel is actively visible."""
+        with self._lock:
+            if self._keyboard_listener is None:
+                try:
+                    self._keyboard_listener = keyboard.Listener(
+                        on_press=self._on_key_press,
+                        win32_event_filter=lambda msg, data: True
+                    )
+                    self._keyboard_listener.daemon = True
+                    self._keyboard_listener.start()
+                    st_log("SelectionMonitor: Active Esc keyboard listener attached.")
+                except Exception as e:
+                    st_log(f"SelectionMonitor: Failed to attach Esc listener: {e}")
+
+    def stop_esc_listener(self):
+        """Stops keyboard listener when the translation panel is closed or dismissed."""
+        with self._lock:
+            if self._keyboard_listener is not None:
+                try:
+                    self._keyboard_listener.stop()
+                except Exception:
+                    pass
+                self._keyboard_listener = None
+                st_log("SelectionMonitor: Esc keyboard listener detached.")
 
     def stop(self):
         """Stops listeners and cancels any active timers."""
@@ -72,12 +91,7 @@ class SelectionMonitor(QObject):
                 pass
             self._mouse_listener = None
 
-        if self._keyboard_listener:
-            try:
-                self._keyboard_listener.stop()
-            except Exception:
-                pass
-            self._keyboard_listener = None
+        self.stop_esc_listener()
 
     def _on_key_press(self, key):
         """Handles Escape key to dismiss HUD."""
@@ -86,6 +100,7 @@ class SelectionMonitor(QObject):
         if key == keyboard.Key.esc:
             if self.is_panel_visible():
                 st_log("SelectionMonitor: Esc pressed -> requesting dismiss")
+                self.stop_esc_listener()
                 self.dismiss_requested.emit()
 
     def _on_click(self, x: int, y: int, button, pressed: bool):

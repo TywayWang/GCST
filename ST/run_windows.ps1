@@ -14,5 +14,5 @@ if (-not (Test-Path $PythonExe)) {
     uv pip install --python $PythonExe -r requirements.txt
 }
 
-Write-Host "[ST] Launching ST Translator..." -ForegroundColor Green
-& $PythonExe -m st_windows.main
+Write-Host "[ST] Launching ST Translator (Standalone)..." -ForegroundColor Green
+& $PythonExe -m st_windows.main --standalone
