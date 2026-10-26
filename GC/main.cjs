@@ -838,8 +838,14 @@ function getTrayIcon(active = false) {
     }
   }
 
-  // Windows 11 & cross-platform: Use the exact same stacked GC-over-ST design as macOS
+  // Windows 11: Use enlarged stacked GC-over-ST icon tailored for Windows tray dimensions
   if (process.platform === 'win32') {
+    const win11IcoName = active ? 'gcst-win11-active.ico' : 'gcst-win11.ico';
+    const win11IcoPath = path.join(__dirname, 'assets', win11IcoName);
+    if (fs.existsSync(win11IcoPath)) {
+      const img = nativeImage.createFromPath(win11IcoPath);
+      if (!img.isEmpty()) return img;
+    }
     const icoName = active ? 'gcstTemplateActive.ico' : 'gcstTemplate.ico';
     const icoPath = path.join(__dirname, 'assets', icoName);
     if (fs.existsSync(icoPath)) {

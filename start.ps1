@@ -89,13 +89,14 @@ if ($Component -in @("All", "ST")) {
         Pop-Location
     }
 
+    $env:PYTHONPATH = $stDir
     Write-Host "  [->] Launching ST..." -ForegroundColor Green
     if ($Foreground -and $Component -eq "ST") {
         Push-Location $stDir
         & $pythonExe -m st_windows.main
         Pop-Location
     } else {
-        Start-Process -FilePath $pythonwExe -ArgumentList "-m", "st_windows.main" -WorkingDirectory $stDir -WindowStyle Hidden
+        Start-Process -FilePath $pythonwExe -ArgumentList "-m st_windows.main" -WorkingDirectory $stDir -WindowStyle Hidden
         Write-Host "  [OK] ST launched in background (active in GCST suite / hover detection)." -ForegroundColor Green
     }
 }
