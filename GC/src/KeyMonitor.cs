@@ -13,7 +13,9 @@ namespace GrammarChecker
         private const int WH_KEYBOARD_LL = 13;
         private const int WH_MOUSE_LL = 14;
         private const int WM_KEYDOWN = 0x0100;
+        private const int WM_KEYUP = 0x0101;
         private const int WM_SYSKEYDOWN = 0x0104;
+        private const int WM_SYSKEYUP = 0x0105;
         private const int WM_RBUTTONUP = 0x0205;
         private const int WM_MBUTTONUP = 0x0208;
         private const uint CF_UNICODETEXT = 13;
@@ -39,13 +41,26 @@ namespace GrammarChecker
         private static bool _isRecording = false;
         private static volatile bool _isSelfPasting = false;
 
+        // Real-time modifier key states tracked by hook on both keydown and keyup
+        private static volatile bool _winPressed = false;
+        private static volatile bool _shiftPressed = false;
+        private static volatile bool _ctrlPressed = false;
+        private static volatile bool _altPressed = false;
+
+        // Dedicated asynchronous writer queue to completely decouple stdout pipe I/O from hook thread
+        private static readonly Queue<string> _outQueue = new Queue<string>();
+        private static readonly object _outLock = new object();
+        private static readonly System.Threading.AutoResetEvent _outEvent = new System.Threading.AutoResetEvent(false);
+
+        // Process name cache by PID to avoid slow Process.GetProcessById calls inside hook
+        private static readonly Dictionary<uint, string> _pidProcNameCache = new Dictionary<uint, string>();
+
         private static IntPtr _cachedHwnd = IntPtr.Zero;
         private static bool _cachedIsTarget = false;
         private static string _cachedTargetId = "terminal";
         private static string _cachedTargetName = "Terminal";
         private static bool _cachedIsEditor = false;
         private static bool _isForegroundNotepad = false;
-        private static int _cachedTick = 0;
         private static bool _wasLastForegroundTarget = false;
 
         private static StringBuilder GetBufferForTarget(string targetId)
@@ -209,6 +224,91 @@ namespace GrammarChecker
         [DllImport("user32.dll")]
         private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
 
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr OpenProcess(uint processAccess, bool bInheritHandle, uint processId);
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        private static extern bool QueryFullProcessImageName(IntPtr hProcess, uint dwFlags, StringBuilder lpExeName, ref uint lpdwSize);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool CloseHandle(IntPtr hObject);
+
+        private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+
+        private static void SendJsonEvent(string json)
+        {
+            if (string.IsNullOrEmpty(json)) return;
+            lock (_outLock)
+            {
+                _outQueue.Enqueue(json);
+            }
+            _outEvent.Set();
+        }
+
+        private static string GetProcessNameByPid(uint pid)
+        {
+            if (pid == 0) return "";
+            lock (_pidProcNameCache)
+            {
+                string cached;
+                if (_pidProcNameCache.TryGetValue(pid, out cached))
+                {
+                    return cached;
+                }
+            }
+
+            string procName = "";
+            try
+            {
+                IntPtr hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+                if (hProc != IntPtr.Zero)
+                {
+                    try
+                    {
+                        StringBuilder sb = new StringBuilder(1024);
+                        uint size = (uint)sb.Capacity;
+                        if (QueryFullProcessImageName(hProc, 0, sb, ref size))
+                        {
+                            string fullPath = sb.ToString();
+                            procName = Path.GetFileNameWithoutExtension(fullPath);
+                        }
+                    }
+                    finally
+                    {
+                        CloseHandle(hProc);
+                    }
+                }
+            }
+            catch { }
+
+            if (string.IsNullOrEmpty(procName))
+            {
+                try
+                {
+                    using (Process proc = Process.GetProcessById((int)pid))
+                    {
+                        procName = proc.ProcessName;
+                    }
+                }
+                catch { }
+            }
+
+            if (!string.IsNullOrEmpty(procName))
+            {
+                lock (_pidProcNameCache)
+                {
+                    if (_pidProcNameCache.Count > 500)
+                    {
+                        _pidProcNameCache.Clear();
+                    }
+                    _pidProcNameCache[pid] = procName;
+                }
+            }
+
+            return procName;
+        }
+
         private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
         [DllImport("user32.dll")]
         private static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
@@ -225,6 +325,35 @@ namespace GrammarChecker
                 Console.InputEncoding = Encoding.UTF8;
             }
             catch { }
+
+            // Start dedicated asynchronous stdout writer thread
+            System.Threading.ThreadPool.QueueUserWorkItem((state) =>
+            {
+                while (true)
+                {
+                    _outEvent.WaitOne(100);
+                    List<string> items = null;
+                    lock (_outLock)
+                    {
+                        if (_outQueue.Count > 0)
+                        {
+                            items = new List<string>(_outQueue);
+                            _outQueue.Clear();
+                        }
+                    }
+                    if (items != null)
+                    {
+                        foreach (string msg in items)
+                        {
+                            try
+                            {
+                                Console.WriteLine(msg);
+                            }
+                            catch { }
+                        }
+                    }
+                }
+            });
 
             _hookID = SetHook(_proc);
             _mouseHookID = SetMouseHook(_mouseProc);
@@ -254,7 +383,7 @@ namespace GrammarChecker
                                 }
                             }
                         }
-                        Console.WriteLine("{\"event\":\"started\"}");
+                        SendJsonEvent("{\"event\":\"started\"}");
                         CheckForegroundWindow(GetForegroundWindow());
                     }
                     else if (line.StartsWith("CLEAR"))
@@ -273,7 +402,7 @@ namespace GrammarChecker
                             GetBufferForTarget(target).Clear();
                             SetCursorPosForTarget(target, 0);
                         }
-                        Console.WriteLine("{\"event\":\"cleared\",\"target\":\"" + target + "\"}");
+                        SendJsonEvent("{\"event\":\"cleared\",\"target\":\"" + target + "\"}");
                     }
                     else if (line == "STOP")
                     {
@@ -286,7 +415,7 @@ namespace GrammarChecker
                             SetCursorPosForTarget(_activeTargetId, 0);
                         }
                         string escaped = EscapeJson(captured);
-                        Console.WriteLine("{\"event\":\"stopped\",\"target\":\"" + _activeTargetId + "\",\"text\":\"" + escaped + "\"}");
+                        SendJsonEvent("{\"event\":\"stopped\",\"target\":\"" + _activeTargetId + "\",\"text\":\"" + escaped + "\"}");
                     }
                     else if (line == "STATUS")
                     {
@@ -295,7 +424,7 @@ namespace GrammarChecker
                             StringBuilder buf = GetBufferForTarget(_activeTargetId);
                             string text = buf.ToString();
                             int wordCount = CountWords(text);
-                            Console.WriteLine("{\"event\":\"status\",\"target\":\"" + _activeTargetId + "\",\"recording\":" + (_isRecording ? "true" : "false") + ",\"length\":" + text.Length + ",\"words\":" + wordCount + ",\"text\":\"" + EscapeJson(text) + "\"}");
+                            SendJsonEvent("{\"event\":\"status\",\"target\":\"" + _activeTargetId + "\",\"recording\":" + (_isRecording ? "true" : "false") + ",\"length\":" + text.Length + ",\"words\":" + wordCount + ",\"text\":\"" + EscapeJson(text) + "\"}");
                         }
                     }
                     else if (line.StartsWith("PASTE"))
@@ -354,7 +483,7 @@ namespace GrammarChecker
                     {
                         foreach (string t in closed)
                         {
-                            Console.WriteLine("{\"event\":\"target_closed\",\"target\":\"" + t + "\"}");
+                            SendJsonEvent("{\"event\":\"target_closed\",\"target\":\"" + t + "\"}");
                         }
                     }
                 }
@@ -623,15 +752,7 @@ namespace GrammarChecker
                 GetWindowThreadProcessId(hwnd, out pid);
                 if (pid == 0) return false;
 
-                string procName = "";
-                try
-                {
-                    using (Process proc = Process.GetProcessById((int)pid))
-                    {
-                        procName = proc.ProcessName;
-                    }
-                }
-                catch { }
+                string procName = GetProcessNameByPid(pid);
 
                 StringBuilder titleSb = new StringBuilder(512);
                 GetWindowText(hwnd, titleSb, titleSb.Capacity);
@@ -754,8 +875,7 @@ namespace GrammarChecker
             IntPtr fg = GetForegroundWindow();
             if (fg == IntPtr.Zero) return false;
 
-            int now = Environment.TickCount;
-            if (fg == _cachedHwnd && (now - _cachedTick) < 400 && (now - _cachedTick) >= 0)
+            if (fg == _cachedHwnd)
             {
                 targetId = _cachedTargetId;
                 targetName = _cachedTargetName;
@@ -764,7 +884,6 @@ namespace GrammarChecker
             }
 
             _cachedHwnd = fg;
-            _cachedTick = now;
             _cachedIsTarget = ClassifyTarget(fg, out _cachedTargetId, out _cachedTargetName, out _cachedIsEditor);
             targetId = _cachedTargetId;
             targetName = _cachedTargetName;
@@ -818,60 +937,106 @@ namespace GrammarChecker
 
         private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
         {
+            if (nCode < 0)
+            {
+                return CallNextHookEx(_hookID, nCode, wParam, lParam);
+            }
+
             if (_isSelfPasting)
             {
                 return CallNextHookEx(_hookID, nCode, wParam, lParam);
             }
 
-            if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN))
+            int vkCode = Marshal.ReadInt32(lParam);
+            Keys key = (Keys)vkCode;
+
+            bool isKeyDown = (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN);
+            bool isKeyUp = (wParam == (IntPtr)WM_KEYUP || wParam == (IntPtr)WM_SYSKEYUP);
+
+            // 1. Standalone modifiers: track state on both keydown and keyup, and pass through immediately
+            if (key == Keys.LWin || key == Keys.RWin || vkCode == 91 || vkCode == 92)
             {
-                int vkCode = Marshal.ReadInt32(lParam);
-                Keys key = (Keys)vkCode;
+                _winPressed = isKeyDown;
+                return CallNextHookEx(_hookID, nCode, wParam, lParam);
+            }
 
-                // 1. Standalone modifiers must immediately pass through without any processing
-                if (key == Keys.LWin || key == Keys.RWin ||
-                    key == Keys.ShiftKey || key == Keys.LShiftKey || key == Keys.RShiftKey ||
-                    key == Keys.ControlKey || key == Keys.LControlKey || key == Keys.RControlKey ||
-                    key == Keys.Menu || key == Keys.LMenu || key == Keys.RMenu ||
-                    key == Keys.Capital || key == Keys.NumLock || key == Keys.Scroll)
+            if (key == Keys.ShiftKey || key == Keys.LShiftKey || key == Keys.RShiftKey || vkCode == 16 || vkCode == 160 || vkCode == 161)
+            {
+                _shiftPressed = isKeyDown;
+                return CallNextHookEx(_hookID, nCode, wParam, lParam);
+            }
+
+            if (key == Keys.ControlKey || key == Keys.LControlKey || key == Keys.RControlKey || vkCode == 17 || vkCode == 162 || vkCode == 163)
+            {
+                _ctrlPressed = isKeyDown;
+                return CallNextHookEx(_hookID, nCode, wParam, lParam);
+            }
+
+            if (key == Keys.Menu || key == Keys.LMenu || key == Keys.RMenu || vkCode == 18 || vkCode == 164 || vkCode == 165)
+            {
+                _altPressed = isKeyDown;
+                return CallNextHookEx(_hookID, nCode, wParam, lParam);
+            }
+
+            if (key == Keys.Capital || key == Keys.NumLock || key == Keys.Scroll)
+            {
+                return CallNextHookEx(_hookID, nCode, wParam, lParam);
+            }
+
+            // Key up events for any other key immediately pass through
+            if (!isKeyDown)
+            {
+                return CallNextHookEx(_hookID, nCode, wParam, lParam);
+            }
+
+            // 2. Real-time physical modifier state detection
+            bool isWin = _winPressed ||
+                         ((GetAsyncKeyState((int)Keys.LWin) & 0x8000) != 0) ||
+                         ((GetAsyncKeyState((int)Keys.RWin) & 0x8000) != 0) ||
+                         ((GetKeyState((int)Keys.LWin) & 0x80) != 0) ||
+                         ((GetKeyState((int)Keys.RWin) & 0x80) != 0);
+
+            bool isShift = _shiftPressed ||
+                           ((GetAsyncKeyState((int)Keys.ShiftKey) & 0x8000) != 0) ||
+                           ((GetAsyncKeyState((int)Keys.LShiftKey) & 0x8000) != 0) ||
+                           ((GetAsyncKeyState((int)Keys.RShiftKey) & 0x8000) != 0) ||
+                           ((GetKeyState((int)Keys.ShiftKey) & 0x80) != 0);
+
+            // 3. CRITICAL: Any keystroke while Windows key is held down (Win+Shift+S, Win+E, Win+R, Win+D, Win+V, etc.)
+            // must NEVER be recorded as typing, must NEVER trigger GC, and must pass through immediately with zero delay!
+            if (isWin)
+            {
+                return CallNextHookEx(_hookID, nCode, wParam, lParam);
+            }
+
+            // Dedicated pass-through guard for 'S' key when Shift is held and any trace of Win is present
+            if (key == Keys.S && isShift)
+            {
+                if (_winPressed ||
+                    ((GetAsyncKeyState(91) & 0x8000) != 0) ||
+                    ((GetAsyncKeyState(92) & 0x8000) != 0))
                 {
                     return CallNextHookEx(_hookID, nCode, wParam, lParam);
                 }
+            }
 
-                // 2. Real-time physical modifier state detection using GetAsyncKeyState
-                // (GetKeyState only inspects thread message queue and returns 0 in background hooks)
-                bool isWin = ((GetAsyncKeyState((int)Keys.LWin) & 0x8000) != 0) ||
-                             ((GetAsyncKeyState((int)Keys.RWin) & 0x8000) != 0) ||
-                             ((GetKeyState((int)Keys.LWin) & 0x80) != 0) ||
-                             ((GetKeyState((int)Keys.RWin) & 0x80) != 0);
+            bool isCtrl = _ctrlPressed ||
+                          ((GetAsyncKeyState((int)Keys.ControlKey) & 0x8000) != 0) ||
+                          ((GetAsyncKeyState((int)Keys.LControlKey) & 0x8000) != 0) ||
+                          ((GetAsyncKeyState((int)Keys.RControlKey) & 0x8000) != 0) ||
+                          ((GetKeyState((int)Keys.ControlKey) & 0x80) != 0);
 
-                bool isCtrl = ((GetAsyncKeyState((int)Keys.ControlKey) & 0x8000) != 0) ||
-                              ((GetAsyncKeyState((int)Keys.LControlKey) & 0x8000) != 0) ||
-                              ((GetAsyncKeyState((int)Keys.RControlKey) & 0x8000) != 0) ||
-                              ((GetKeyState((int)Keys.ControlKey) & 0x80) != 0);
+            bool isAlt = _altPressed ||
+                         ((GetAsyncKeyState((int)Keys.Menu) & 0x8000) != 0) ||
+                         ((GetAsyncKeyState((int)Keys.LMenu) & 0x8000) != 0) ||
+                         ((GetAsyncKeyState((int)Keys.RMenu) & 0x8000) != 0) ||
+                         ((GetKeyState((int)Keys.Menu) & 0x80) != 0);
 
-                bool isAlt = ((GetAsyncKeyState((int)Keys.Menu) & 0x8000) != 0) ||
-                             ((GetAsyncKeyState((int)Keys.LMenu) & 0x8000) != 0) ||
-                             ((GetAsyncKeyState((int)Keys.RMenu) & 0x8000) != 0) ||
-                             ((GetKeyState((int)Keys.Menu) & 0x80) != 0);
-
-                bool isShift = ((GetAsyncKeyState((int)Keys.ShiftKey) & 0x8000) != 0) ||
-                               ((GetAsyncKeyState((int)Keys.LShiftKey) & 0x8000) != 0) ||
-                               ((GetAsyncKeyState((int)Keys.RShiftKey) & 0x8000) != 0) ||
-                               ((GetKeyState((int)Keys.ShiftKey) & 0x80) != 0);
-
-                // 3. CRITICAL: Any key pressed while the Windows key is held (e.g. Win + Shift + S, Win + E, Win + R, Win + D)
-                // must NEVER be recorded as typing, must NEVER trigger GC, and must pass through immediately!
-                if (isWin || (key == Keys.S && isShift && (((GetAsyncKeyState((int)Keys.LWin) & 0x8000) != 0) || ((GetAsyncKeyState((int)Keys.RWin) & 0x8000) != 0))))
-                {
-                    return CallNextHookEx(_hookID, nCode, wParam, lParam);
-                }
-
-                // 4. Ignore hotkey triggering combinations (e.g. Ctrl + Alt + X or Ctrl + Alt + Z)
-                if (isCtrl && isAlt && (key == Keys.X || key == Keys.Z))
-                {
-                    return CallNextHookEx(_hookID, nCode, wParam, lParam);
-                }
+            // 4. Ignore hotkey triggering combinations (e.g. Ctrl + Alt + X or Ctrl + Alt + Z)
+            if (isCtrl && isAlt && (key == Keys.X || key == Keys.Z))
+            {
+                return CallNextHookEx(_hookID, nCode, wParam, lParam);
+            }
 
                 if (_isRecording)
                 {
@@ -1158,7 +1323,7 @@ namespace GrammarChecker
                                 keyState[(int)Keys.Capital] = (byte)((GetKeyState((int)Keys.Capital) & 0x01) != 0 ? 0x01 : 0);
 
                                 StringBuilder sb = new StringBuilder(10);
-                                int res = ToUnicode((uint)vkCode, 0, keyState, sb, sb.Capacity, 0);
+                                int res = ToUnicode((uint)vkCode, 0, keyState, sb, sb.Capacity, 4);
                                 if (res > 0)
                                 {
                                     string s = sb.ToString();
@@ -1173,7 +1338,6 @@ namespace GrammarChecker
                         }
                     }
                 }
-            }
             return CallNextHookEx(_hookID, nCode, wParam, lParam);
         }
 
@@ -1223,22 +1387,22 @@ namespace GrammarChecker
             int len = text.Length;
             int words = CountWords(text);
             string escaped = EscapeJson(text);
-            Console.WriteLine("{\"event\":\"update\",\"target\":\"" + _activeTargetId + "\",\"targetName\":\"" + _activeTargetName + "\",\"text\":\"" + escaped + "\",\"length\":" + len + ",\"words\":" + words + "}");
+            SendJsonEvent("{\"event\":\"update\",\"target\":\"" + _activeTargetId + "\",\"targetName\":\"" + _activeTargetName + "\",\"text\":\"" + escaped + "\",\"length\":" + len + ",\"words\":" + words + "}");
         }
 
         private static void NotifyAction(string action)
         {
-            Console.WriteLine("{\"event\":\"action\",\"target\":\"" + _activeTargetId + "\",\"targetName\":\"" + _activeTargetName + "\",\"action\":\"" + action + "\",\"text\":\"\",\"length\":0,\"words\":0}");
+            SendJsonEvent("{\"event\":\"action\",\"target\":\"" + _activeTargetId + "\",\"targetName\":\"" + _activeTargetName + "\",\"action\":\"" + action + "\",\"text\":\"\",\"length\":0,\"words\":0}");
         }
 
         private static void NotifyFocus(string targetId, string targetName)
         {
-            Console.WriteLine("{\"event\":\"focus\",\"target\":\"" + targetId + "\",\"targetName\":\"" + targetName + "\"}");
+            SendJsonEvent("{\"event\":\"focus\",\"target\":\"" + targetId + "\",\"targetName\":\"" + targetName + "\"}");
         }
 
         private static void NotifyBlur()
         {
-            Console.WriteLine("{\"event\":\"blur\"}");
+            SendJsonEvent("{\"event\":\"blur\"}");
         }
 
         private static int CountWords(string text)
@@ -1430,7 +1594,7 @@ namespace GrammarChecker
                         SetForegroundWindow(targetHwnd);
                     }
 
-                    Console.WriteLine("{\"event\":\"pasted\",\"target\":\"" + targetId + "\"}");
+                    SendJsonEvent("{\"event\":\"pasted\",\"target\":\"" + targetId + "\"}");
                 }
                 finally
                 {

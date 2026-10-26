@@ -4,7 +4,7 @@ import ctypes
 from ctypes import c_int, byref
 from typing import Optional, List
 
-from PyQt6.QtCore import Qt, QPoint, QRectF, pyqtSignal
+from PyQt6.QtCore import Qt, QPoint, QRectF, pyqtSignal, QTimer
 from PyQt6.QtGui import (
     QFont, QCursor, QGuiApplication, QKeyEvent,
     QPainter, QColor, QPen, QBrush, QAction, QActionGroup
@@ -121,6 +121,11 @@ class TranslationWindow(QWidget):
         self.token_received.connect(self._handle_token)
         self.translation_completed.connect(self._handle_complete)
         self.translation_failed.connect(self._handle_error)
+
+        # Esc polling timer without installing system-wide keyboard hooks
+        self._esc_timer = QTimer(self)
+        self._esc_timer.setInterval(40)
+        self._esc_timer.timeout.connect(self._check_esc_pressed)
 
         self._init_ui()
         self._apply_win32_styles()
@@ -580,6 +585,8 @@ class TranslationWindow(QWidget):
         self.show()
         self.raise_()
         self.update()
+        if hasattr(self, '_esc_timer'):
+            self._esc_timer.start()
         QApplication.processEvents()
 
         # Begin Ollama stream with configured language parameters
@@ -676,9 +683,29 @@ class TranslationWindow(QWidget):
         if not self._translated_text:
             self.text_box.setHtml(f"<span style='color: #ef4444;'>Error: {err_msg}</span>")
 
+    def _check_esc_pressed(self):
+        if not self.isVisible():
+            if hasattr(self, '_esc_timer'):
+                self._esc_timer.stop()
+            return
+        try:
+            import win32api
+            import win32con
+            if (win32api.GetAsyncKeyState(win32con.VK_ESCAPE) & 0x8000) != 0:
+                self.dismiss()
+        except Exception:
+            pass
+
     def dismiss(self):
+        if hasattr(self, '_esc_timer'):
+            self._esc_timer.stop()
         OllamaService.shared().cancel_current_translation()
         self.hide()
+
+    def hideEvent(self, event):
+        if hasattr(self, '_esc_timer'):
+            self._esc_timer.stop()
+        super().hideEvent(event)
 
     def is_point_inside(self, x: int = 0, y: int = 0) -> bool:
         """Determines if the mouse cursor is currently within the popup bounds in Qt coordinate space."""

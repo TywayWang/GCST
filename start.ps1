@@ -69,7 +69,7 @@ if ($Component -in @("All", "GC")) {
         npm start
         Pop-Location
     } else {
-        Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "npm start" -WorkingDirectory $gcDir -WindowStyle Hidden
+        Start-Process -FilePath "cmd.exe" -ArgumentList "/c npm start" -WorkingDirectory $gcDir -WindowStyle Hidden
         Write-Host "  [OK] GC launched in background (active in system tray / desktop HUD)." -ForegroundColor Green
     }
 }
@@ -96,7 +96,7 @@ if ($Component -in @("All", "ST")) {
         & $pythonExe -m st_windows.main
         Pop-Location
     } else {
-        Start-Process -FilePath $pythonwExe -ArgumentList "-m st_windows.main" -WorkingDirectory $stDir -WindowStyle Hidden
+        Start-Process -FilePath "cmd.exe" -ArgumentList "/c set PYTHONPATH=$stDir&& `"$pythonwExe`" -m st_windows.main" -WorkingDirectory $stDir -WindowStyle Hidden
         Write-Host "  [OK] ST launched in background (active in GCST suite / hover detection)." -ForegroundColor Green
     }
 }
