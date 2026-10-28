@@ -67,6 +67,12 @@ class STIPCServer:
                         enabled = False
                     if hasattr(parent, 'window') and parent.window:
                         parent.window.set_paused_state(not enabled)
+                    try:
+                        import urllib.request
+                        req = urllib.request.Request("http://127.0.0.1:11436/st-status-updated")
+                        urllib.request.urlopen(req, timeout=0.5)
+                    except Exception:
+                        pass
                     st_log(f"STIPCServer: toggle -> is_enabled={enabled}")
                     response_data = {"enabled": enabled}
 

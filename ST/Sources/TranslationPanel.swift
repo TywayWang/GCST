@@ -7,6 +7,11 @@ public class TranslationPanel: NSPanel {
     private let viewModel = TranslationViewModel()
     private var hostingView: NSHostingView<TranslationView>?
     private var showTimestamp: Date = .distantPast
+    private var cursorTrackingTimer: Timer?
+    private var initialTriggerPoint: NSPoint = .zero
+    private var hasCursorEnteredPanel: Bool = false
+    private let dismissPadding: CGFloat = 18.0
+    private let triggerDismissDistance: CGFloat = 85.0
 
     public var isPinned: Bool {
         return viewModel.isPinned
@@ -53,6 +58,8 @@ public class TranslationPanel: NSPanel {
 
     public func show(at point: NSPoint, selectionRect: NSRect, text: String) {
         showTimestamp = Date()
+        initialTriggerPoint = point
+        hasCursorEnteredPanel = false
         viewModel.isPinned = false
         if let appDel = AppDelegate.shared {
             viewModel.isPaused = !appDel.isHoverEnabled
@@ -94,10 +101,13 @@ public class TranslationPanel: NSPanel {
             context.duration = 0.15
             self.animator().alphaValue = 1.0
         }
+        startCursorTracking()
     }
 
     public func showCenter(text: String) {
         showTimestamp = Date()
+        initialTriggerPoint = NSEvent.mouseLocation
+        hasCursorEnteredPanel = false
         viewModel.isPinned = false
         if let appDel = AppDelegate.shared {
             viewModel.isPaused = !appDel.isHoverEnabled
@@ -120,14 +130,19 @@ public class TranslationPanel: NSPanel {
             context.duration = 0.15
             self.animator().alphaValue = 1.0
         }
+        startCursorTracking()
     }
 
     public func dismissAnimated(force: Bool = false) {
-        guard self.isVisible else { return }
+        guard self.isVisible else {
+            stopCursorTracking()
+            return
+        }
         if isPinned && !force {
             return
         }
 
+        stopCursorTracking()
         STLog("dismissAnimated: dismissing translation panel")
         OllamaService.shared.cancelCurrentTranslation()
 
@@ -137,5 +152,57 @@ public class TranslationPanel: NSPanel {
         }, completionHandler: {
             self.orderOut(nil)
         })
+    }
+
+    public override func orderOut(_ sender: Any?) {
+        stopCursorTracking()
+        super.orderOut(sender)
+    }
+
+    private func startCursorTracking() {
+        stopCursorTracking()
+        let timer = Timer(timeInterval: 0.06, repeats: true) { [weak self] _ in
+            self?.checkCursorTracking()
+        }
+        cursorTrackingTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func stopCursorTracking() {
+        cursorTrackingTimer?.invalidate()
+        cursorTrackingTimer = nil
+        hasCursorEnteredPanel = false
+    }
+
+    private func checkCursorTracking() {
+        guard self.isVisible else {
+            stopCursorTracking()
+            return
+        }
+        if isPinned {
+            return
+        }
+        // Grace period during entry animation
+        if Date().timeIntervalSince(showTimestamp) < 0.25 {
+            return
+        }
+
+        let mouseLoc = NSEvent.mouseLocation
+        let expandedFrame = self.frame.insetBy(dx: -dismissPadding, dy: -dismissPadding)
+
+        if expandedFrame.contains(mouseLoc) {
+            hasCursorEnteredPanel = true
+        } else {
+            if hasCursorEnteredPanel {
+                STLog("checkCursorTracking: Cursor moved outside translation panel -> auto-dismissing")
+                dismissAnimated()
+            } else {
+                let dist = hypot(mouseLoc.x - initialTriggerPoint.x, mouseLoc.y - initialTriggerPoint.y)
+                if dist > triggerDismissDistance {
+                    STLog("checkCursorTracking: Cursor moved away from selection point (\(Int(dist))px > \(Int(triggerDismissDistance))px) -> auto-dismissing")
+                    dismissAnimated()
+                }
+            }
+        }
     }
 }

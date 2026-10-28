@@ -96,7 +96,13 @@ def main():
     def on_pause_toggled(is_paused: bool):
         monitor.is_enabled = not is_paused
         if tray:
-            tray.active_action.setChecked(not is_paused)
+            tray.on_paused_state_changed(is_paused)
+        try:
+            import urllib.request
+            req = urllib.request.Request("http://127.0.0.1:11436/st-status-updated")
+            urllib.request.urlopen(req, timeout=0.5)
+        except Exception:
+            pass
         st_log(f"Coordinator: Hover translation {'paused' if is_paused else 'resumed'}")
 
     window.pause_toggled_callback = on_pause_toggled

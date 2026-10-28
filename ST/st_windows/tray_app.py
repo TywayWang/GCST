@@ -101,7 +101,10 @@ class TrayApp(QObject):
         menu.addSeparator()
 
         # Active Toggle Action
-        self.active_action = QAction("Active (Hover Translation)", menu)
+        self.active_action = QAction(
+            "Pause ST Hover Translation" if self.selection_monitor.is_enabled else "Resume ST Hover Translation",
+            menu
+        )
         self.active_action.setCheckable(True)
         self.active_action.setChecked(self.selection_monitor.is_enabled)
         self.active_action.triggered.connect(self._toggle_active)
@@ -200,10 +203,22 @@ class TrayApp(QObject):
                     action.setChecked(True)
                     break
 
+    def on_paused_state_changed(self, is_paused: bool):
+        self.selection_monitor.is_enabled = not is_paused
+        self.active_action.setChecked(not is_paused)
+        self.active_action.setText("Resume ST Hover Translation" if is_paused else "Pause ST Hover Translation")
+
     def _toggle_active(self, checked: bool):
         self.selection_monitor.is_enabled = checked
+        self.active_action.setText("Pause ST Hover Translation" if checked else "Resume ST Hover Translation")
         if hasattr(self, 'translation_window') and self.translation_window:
             self.translation_window.set_paused_state(not checked)
+        try:
+            import urllib.request
+            req = urllib.request.Request("http://127.0.0.1:11436/st-status-updated")
+            urllib.request.urlopen(req, timeout=0.5)
+        except Exception:
+            pass
         st_log(f"toggle_active: is_enabled is now {checked}")
 
     def _set_hover_delay(self, delay: float):

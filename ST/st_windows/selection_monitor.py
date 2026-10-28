@@ -156,16 +156,11 @@ class SelectionMonitor(QObject):
             timer.start()
 
     def _on_move(self, x: int, y: int):
-        if not self.is_enabled:
-            return
-
-        self._pending_selection_pos = (x, y)
-
-        # Automatic close when cursor moves:
+        # Automatic close when cursor moves (must evaluate whether paused or not):
         if self.is_panel_visible():
             inside = self.is_point_inside_panel(x, y)
             if inside:
-                # User moved cursor inside the HUD (e.g. to drag it)
+                # User moved cursor inside the HUD (e.g. to drag it or click pause)
                 self._cursor_entered_panel = True
             else:
                 if self._cursor_entered_panel:
@@ -179,3 +174,8 @@ class SelectionMonitor(QObject):
                     if dist > self.move_dismiss_radius:
                         st_log(f"SelectionMonitor: Cursor moved away ({dist:.1f}px > {self.move_dismiss_radius:.0f}px) -> auto-dismissing")
                         self.dismiss_requested.emit()
+
+        if not self.is_enabled:
+            return
+
+        self._pending_selection_pos = (x, y)

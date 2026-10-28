@@ -812,6 +812,47 @@ function testSTPopup() {
   http.get('http://127.0.0.1:11435/test', { timeout: 1000 }, () => {}).on('error', () => {});
 }
 
+let lastSTEnabled = null;
+let lastSTRunning = null;
+
+function startSTStatusWatcher() {
+  setInterval(async () => {
+    try {
+      const status = await querySTStatus();
+      if (status.enabled !== lastSTEnabled || status.running !== lastSTRunning) {
+        lastSTEnabled = status.enabled;
+        lastSTRunning = status.running;
+        await updateTray();
+      }
+    } catch (e) {}
+  }, 600);
+}
+
+const ST_NOTIFY_PORT = 11436;
+function startGCSTSyncServer() {
+  try {
+    const server = http.createServer((req, res) => {
+      if (req.url === '/st-status-updated') {
+        updateTray();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('{"ok":true}');
+      } else {
+        res.writeHead(404);
+        res.end();
+      }
+    });
+    server.on('error', (err) => {
+      // Port in use or permission issue: ignore quietly as polling watcher is active
+      console.log('[GC] GCST sync server port 11436 notice:', err.message);
+    });
+    server.listen(ST_NOTIFY_PORT, '127.0.0.1', () => {
+      console.log(`[GC] GCST sync listener running on 127.0.0.1:${ST_NOTIFY_PORT}`);
+    });
+  } catch (err) {
+    console.log('[GC] Failed to start GCST sync server:', err);
+  }
+}
+
 function quitGCSTSuite() {
   if (app.isQuitting) {
     app.quit();
@@ -907,24 +948,35 @@ function createTray() {
   });
 }
 
+let isUpdatingTray = false;
+let queuedTrayUpdate = false;
+
 async function updateTray() {
   if (!tray) return;
+  if (isUpdatingTray) {
+    queuedTrayUpdate = true;
+    return;
+  }
+  isUpdatingTray = true;
 
-  const icon = getTrayIcon(isGCRunning);
-  tray.setImage(icon);
-
-  const targetDesc = process.platform === 'darwin'
-    ? 'Terminal / Notes / iTerm2 / Warp'
-    : 'Terminal / CyberTerminal / Notepad';
-  const hotkeyDesc = process.platform === 'darwin' ? 'Shift+Cmd+X' : 'Ctrl+Alt+X';
-
-  const statusTooltip = `GCST Suite [GC: ${isGCRunning ? 'ON' : 'OFF'} | ST: Active]`;
-  tray.setToolTip(statusTooltip);
-
-  let stStatus = { running: false, enabled: false };
   try {
-    stStatus = await querySTStatus();
-  } catch (e) {}
+    const icon = getTrayIcon(isGCRunning);
+    tray.setImage(icon);
+
+    const targetDesc = process.platform === 'darwin'
+      ? 'Terminal / Notes / iTerm2 / Warp'
+      : 'Terminal / CyberTerminal / Notepad';
+    const hotkeyDesc = process.platform === 'darwin' ? 'Shift+Cmd+X' : 'Ctrl+Alt+X';
+
+    let stStatus = { running: false, enabled: false };
+    try {
+      stStatus = await querySTStatus();
+      lastSTEnabled = stStatus.enabled;
+      lastSTRunning = stStatus.running;
+    } catch (e) {}
+
+    const statusTooltip = `GCST Suite [GC: ${isGCRunning ? 'ON' : 'OFF'} | ST: ${stStatus.running ? (stStatus.enabled ? 'Active' : 'Paused') : 'Off'}]`;
+    tray.setToolTip(statusTooltip);
 
   let availableModels = ['gemma4:e4b'];
   let isOllamaOnline = false;
@@ -1099,6 +1151,13 @@ async function updateTray() {
   ]);
 
   tray.setContextMenu(contextMenu);
+  } finally {
+    isUpdatingTray = false;
+    if (queuedTrayUpdate) {
+      queuedTrayUpdate = false;
+      setTimeout(updateTray, 50);
+    }
+  }
 }
 
 app.whenReady().then(async () => {
@@ -1113,6 +1172,8 @@ app.whenReady().then(async () => {
   getOrCreateTargetInstance('notes', 'Notes');
 
   createTray();
+  startGCSTSyncServer();
+  startSTStatusWatcher();
 
   // Configure application menu with review-aware Undo/Redo handling
   const menuTemplate = [

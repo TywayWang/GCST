@@ -153,6 +153,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Selec
         let isTrusted = checkAccessibility(prompt: false)
         STLog("menuWillOpen: AXIsProcessTrusted = \(isTrusted)")
 
+        isEnabledMenuItem?.title = isHoverEnabled ? "Pause ST Hover Translation" : "Resume ST Hover Translation"
+        isEnabledMenuItem?.state = isHoverEnabled ? .on : .off
+
         if isTrusted {
             accessibilityMenuItem?.title = "Accessibility: Granted ✓"
             accessibilityMenuItem?.action = nil
@@ -218,9 +221,13 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Selec
 
         menu.addItem(NSMenuItem.separator())
 
-        let enabledItem = NSMenuItem(title: "Active (Hover Translation)", action: #selector(toggleEnabled), keyEquivalent: "")
+        let enabledItem = NSMenuItem(
+            title: isHoverEnabled ? "Pause ST Hover Translation" : "Resume ST Hover Translation",
+            action: #selector(toggleEnabled),
+            keyEquivalent: ""
+        )
         enabledItem.target = self
-        enabledItem.state = .on
+        enabledItem.state = isHoverEnabled ? .on : .off
         self.isEnabledMenuItem = enabledItem
         menu.addItem(enabledItem)
 
@@ -289,10 +296,20 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Selec
     public func setHoverEnabled(_ enabled: Bool) {
         selectionMonitor.isEnabled = enabled
         isEnabledMenuItem?.state = enabled ? .on : .off
+        isEnabledMenuItem?.title = enabled ? "Pause ST Hover Translation" : "Resume ST Hover Translation"
         DispatchQueue.main.async {
             TranslationPanel.shared.updatePausedState(!enabled)
         }
+        notifyGCStatusUpdated()
         STLog("setHoverEnabled: isEnabled is now \(enabled)")
+    }
+
+    private func notifyGCStatusUpdated() {
+        guard let url = URL(string: "http://127.0.0.1:11436/st-status-updated") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 0.5
+        URLSession.shared.dataTask(with: request).resume()
     }
 
     @objc private func toggleEnabled() {
