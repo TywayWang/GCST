@@ -189,6 +189,61 @@ Do not output markdown code blocks. Output raw JSON only.`
     return this.activeModel;
   }
 
+  async freeVram() {
+    try {
+      let loadedModels = [];
+      try {
+        const psData = await new Promise((resolve) => {
+          const req = http.get(this.baseUrl + '/api/ps', { timeout: 3000 }, (res) => {
+            let raw = '';
+            res.on('data', chunk => raw += chunk);
+            res.on('end', () => {
+              try { resolve(JSON.parse(raw)); } catch { resolve({}); }
+            });
+          });
+          req.on('error', () => resolve({}));
+          req.on('timeout', () => { req.destroy(); resolve({}); });
+        });
+        if (Array.isArray(psData.models)) {
+          loadedModels = psData.models.map(m => m.name || m.model).filter(Boolean);
+        }
+      } catch (e) {
+        console.warn('[OllamaClient] Could not query /api/ps:', e.message);
+      }
+
+      const modelsToUnload = new Set(loadedModels);
+      if (this.activeModel) modelsToUnload.add(this.activeModel);
+      if (this.preferredModel) modelsToUnload.add(this.preferredModel);
+
+      for (const model of modelsToUnload) {
+        await new Promise((resolve) => {
+          const payload = JSON.stringify({ model, keep_alive: 0 });
+          const req = http.request(this.baseUrl + '/api/generate', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(payload)
+            },
+            timeout: 5000
+          }, (res) => {
+            res.resume();
+            res.on('end', () => resolve(true));
+          });
+          req.on('error', () => resolve(false));
+          req.on('timeout', () => { req.destroy(); resolve(false); });
+          req.write(payload);
+          req.end();
+        });
+      }
+
+      console.log('[OllamaClient] Free VRAM complete. Unloaded ' + modelsToUnload.size + ' model(s):', Array.from(modelsToUnload));
+      return { success: true, count: modelsToUnload.size, models: Array.from(modelsToUnload) };
+    } catch (err) {
+      console.error('[OllamaClient] Free VRAM error:', err.message);
+      return { success: false, error: err.message };
+    }
+  }
+
   async checkGrammarAndSpelling(text, customModel = null, customDialect = null) {
     const modelToUse = customModel || this.activeModel || this.preferredModel;
     const dialectToUse = customDialect || this.activeDialect || 'en-GB';

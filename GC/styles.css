@@ -814,6 +814,42 @@ textarea,
   text-shadow: 0 0 6px rgba(255, 255, 255, 0.45);
 }
 
+/* Free VRAM Action Button (Microchip Icon placed next to Clear) */
+.btn-vram {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--text-dim);
+  border-radius: 6px;
+  transition: all 0.18s ease;
+  position: relative;
+}
+
+.btn-vram:hover {
+  background: rgba(56, 189, 248, 0.12);
+  color: #38bdf8;
+}
+
+.btn-vram:active {
+  background: rgba(56, 189, 248, 0.22);
+  transform: translateY(1px);
+}
+
+.btn-vram.freeing svg {
+  animation: vramSpin 0.8s linear infinite;
+  color: #38bdf8;
+}
+
+.btn-vram.freed {
+  background: rgba(34, 197, 94, 0.16) !important;
+  color: #4ade80 !important;
+}
+
+@keyframes vramSpin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
 /* Clear Action Button (Bin Icon placed at right side of latency) */
 .btn-clear {
   width: 28px;

@@ -88,6 +88,15 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Selec
                 let model = OllamaService.shared.modelName
                 let enabled = self.selectionMonitor.isEnabled
                 responseBody = "{\"running\":true,\"enabled\":\(enabled),\"model\":\"\(model)\"}"
+            } else if req.contains("GET /free-vram") {
+                OllamaService.shared.freeVRAM { success, _ in
+                    let res = "{\"success\":\(success)}"
+                    let httpRes = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: \(res.utf8.count)\r\nConnection: close\r\n\r\n\(res)"
+                    connection.send(content: httpRes.data(using: .utf8), completion: .contentProcessed({ _ in
+                        connection.cancel()
+                    }))
+                }
+                return
             } else if req.contains("GET /test") {
                 self.triggerTestPopup()
                 responseBody = "{\"test\":true}"
@@ -204,6 +213,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Selec
         delayParent.submenu = delayMenu
         menu.addItem(delayParent)
 
+        // Free VRAM action
+        let freeVramItem = NSMenuItem(title: "⚡ Free up VRAM", action: #selector(freeVRAMAction), keyEquivalent: "")
+        freeVramItem.target = self
+        menu.addItem(freeVramItem)
+
         // Manual test action
         let testItem = NSMenuItem(title: "Test Popup Translation", action: #selector(triggerTestPopup), keyEquivalent: "t")
         testItem.target = self
@@ -216,6 +230,13 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Selec
         menu.addItem(quitItem)
 
         self.statusItem?.menu = menu
+    }
+
+    @objc private func freeVRAMAction() {
+        STLog("freeVRAMAction triggered from menu")
+        OllamaService.shared.freeVRAM { success, _ in
+            STLog("freeVRAM completed: success = \(success)")
+        }
     }
 
     @objc private func toggleEnabled() {

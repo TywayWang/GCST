@@ -46,6 +46,8 @@ public class TranslationViewModel: ObservableObject {
     @Published public var targetLang: String = "Chinese"
     @Published public var activeModel: String = "gemma4:e4b"
     @Published public var availableModels: [String] = ["gemma4:e4b"]
+    @Published public var isFreeingVRAM: Bool = false
+    @Published public var vramFreedSuccess: Bool = false
 
     public var isPinned: Bool = false
     public var onClose: (() -> Void)?
@@ -151,6 +153,22 @@ public class TranslationViewModel: ObservableObject {
         saveConfig()
         if !originalText.isEmpty {
             startTranslation(source: originalText)
+        }
+    }
+
+    public func freeVRAM() {
+        self.isFreeingVRAM = true
+        self.vramFreedSuccess = false
+        OllamaService.shared.freeVRAM { [weak self] success, _ in
+            DispatchQueue.main.async {
+                self?.isFreeingVRAM = false
+                if success {
+                    self?.vramFreedSuccess = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
+                        self?.vramFreedSuccess = false
+                    }
+                }
+            }
         }
     }
 
@@ -310,6 +328,24 @@ public struct TranslationView: View {
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(Color(red: 0.28, green: 0.33, blue: 0.41)) // #475569
                 }
+
+                // Free VRAM Button
+                Button(action: {
+                    viewModel.freeVRAM()
+                }) {
+                    Image(systemName: "memorychip")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(
+                            viewModel.isFreeingVRAM
+                                ? Color(red: 0.22, green: 0.74, blue: 0.97)
+                                : (viewModel.vramFreedSuccess ? Color(red: 0.29, green: 0.87, blue: 0.50) : Color(red: 0.39, green: 0.45, blue: 0.55))
+                        )
+                        .padding(3)
+                        .background(Color.white.opacity(0.04))
+                        .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+                .help("Free up VRAM (Unload LLM models from GPU memory)")
             }
 
             // Divider line

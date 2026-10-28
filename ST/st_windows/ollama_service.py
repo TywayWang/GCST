@@ -69,6 +69,46 @@ class OllamaService:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def free_vram(self, completion: Optional[Callable[[bool, str], None]] = None):
+        """Unloads all active models from GPU VRAM by setting keep_alive to 0."""
+        def worker():
+            try:
+                models_to_unload = set()
+                try:
+                    resp = requests.get(f"{self.host}/api/ps", timeout=3.0)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        for m in data.get("models", []):
+                            name = m.get("name") or m.get("model")
+                            if name:
+                                models_to_unload.add(name)
+                except Exception as e:
+                    st_log(f"free_vram: Failed to query /api/ps: {e}")
+
+                if self.model_name:
+                    models_to_unload.add(self.model_name)
+
+                st_log(f"free_vram: Unloading {len(models_to_unload)} models: {models_to_unload}")
+                for m in models_to_unload:
+                    try:
+                        requests.post(
+                            f"{self.host}/api/generate",
+                            json={"model": m, "keep_alive": 0},
+                            timeout=5.0
+                        )
+                    except Exception as e:
+                        st_log(f"free_vram: Error unloading {m}: {e}")
+
+                st_log("free_vram: GPU VRAM successfully released.")
+                if completion:
+                    completion(True, "VRAM Freed!")
+            except Exception as e:
+                st_log(f"free_vram: Failed to free VRAM: {e}")
+                if completion:
+                    completion(False, str(e))
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def cancel_current_translation(self):
         """Cancels any in-flight translation request."""
         self._current_cancel_event.set()

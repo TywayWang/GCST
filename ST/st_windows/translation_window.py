@@ -4,10 +4,12 @@ import ctypes
 from ctypes import c_int, byref
 from typing import Optional, List
 
-from PyQt6.QtCore import Qt, QPoint, QRectF, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, QPoint, QRectF, pyqtSignal, QTimer, QSize, QByteArray
+from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtGui import (
     QFont, QCursor, QGuiApplication, QKeyEvent,
-    QPainter, QColor, QPen, QBrush, QAction, QActionGroup
+    QPainter, QColor, QPen, QBrush, QAction, QActionGroup,
+    QIcon, QPixmap
 )
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -72,6 +74,7 @@ class DraggableTextEdit(QTextEdit):
         self.parent_window = parent_window
         self._drag_pos: Optional[QPoint] = None
 
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_pos = event.globalPosition().toPoint() - self.parent_window.frameGeometry().topLeft()
@@ -99,6 +102,7 @@ class TranslationWindow(QWidget):
     translation_completed = pyqtSignal(str)
     translation_failed = pyqtSignal(str)
     model_changed = pyqtSignal(str)
+    vram_freed = pyqtSignal(bool, str)
 
     def __init__(self):
         super().__init__()
@@ -121,6 +125,7 @@ class TranslationWindow(QWidget):
         self.token_received.connect(self._handle_token)
         self.translation_completed.connect(self._handle_complete)
         self.translation_failed.connect(self._handle_error)
+        self.vram_freed.connect(self._handle_vram_freed)
 
         # Esc polling timer without installing system-wide keyboard hooks
         self._esc_timer = QTimer(self)
@@ -243,6 +248,29 @@ class TranslationWindow(QWidget):
         self.latency_label.setStyleSheet("color: #475569; background: transparent; border: none;")
         self.latency_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         header_layout.addWidget(self.latency_label)
+
+        # --- Free VRAM Button ---
+        self.vram_btn = QPushButton()
+        self.vram_btn.setFixedSize(22, 22)
+        self.vram_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.vram_btn.setToolTip("Free up VRAM (Unload LLM models from GPU memory)")
+        self.vram_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                border-radius: 4px;
+                padding: 3px;
+            }
+            QPushButton:hover {
+                background: rgba(56, 189, 248, 0.12);
+            }
+            QPushButton:pressed {
+                background: rgba(56, 189, 248, 0.22);
+            }
+        """)
+        self._update_vram_icon("#64748b")
+        self.vram_btn.clicked.connect(self._free_vram)
+        header_layout.addWidget(self.vram_btn)
 
         layout.addLayout(header_layout)
 
@@ -530,6 +558,61 @@ class TranslationWindow(QWidget):
             st_log(f"Notice applying Win32 styles: {e}")
 
     # MARK: - Window Dragging Anywhere Inside Card
+
+    def _create_vram_icon(self, color: str = "#64748b") -> QIcon:
+        svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="4" y="4" width="16" height="16" rx="2"></rect>
+  <rect x="9" y="9" width="6" height="6"></rect>
+  <line x1="9" y1="1" x2="9" y2="4"></line>
+  <line x1="15" y1="1" x2="15" y2="4"></line>
+  <line x1="9" y1="20" x2="9" y2="23"></line>
+  <line x1="15" y1="20" x2="15" y2="23"></line>
+  <line x1="20" y1="9" x2="23" y2="9"></line>
+  <line x1="20" y1="14" x2="23" y2="14"></line>
+  <line x1="1" y1="9" x2="4" y2="9"></line>
+  <line x1="1" y1="14" x2="4" y2="14"></line>
+</svg>'''
+        renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
+        pix = QPixmap(16, 16)
+        pix.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pix)
+        renderer.render(p)
+        p.end()
+        return QIcon(pix)
+
+    def _update_vram_icon(self, color: str = "#64748b"):
+        if hasattr(self, "vram_btn"):
+            self.vram_btn.setIcon(self._create_vram_icon(color))
+            self.vram_btn.setIconSize(QSize(14, 14))
+
+    def _free_vram(self):
+        st_log("TranslationWindow: Free VRAM requested by user")
+        self._update_vram_icon("#38bdf8")
+        self.vram_btn.setToolTip("Freeing VRAM...")
+        self.latency_label.setText("Freeing...")
+
+        def on_done(success: bool, msg: str):
+            self.vram_freed.emit(success, msg)
+
+        OllamaService.shared().free_vram(on_done)
+
+    def _handle_vram_freed(self, success: bool, msg: str):
+        if success:
+            st_log("TranslationWindow: VRAM successfully freed")
+            self._update_vram_icon("#4ade80")
+            self.vram_btn.setToolTip("VRAM Freed!")
+            self.latency_label.setText("Freed!")
+            QTimer.singleShot(2200, lambda: self._reset_vram_button())
+        else:
+            st_log(f"TranslationWindow: VRAM free failed: {msg}")
+            self.vram_btn.setToolTip(f"Error: {msg}")
+            QTimer.singleShot(2200, lambda: self._reset_vram_button())
+
+    def _reset_vram_button(self):
+        self._update_vram_icon("#64748b")
+        self.vram_btn.setToolTip("Free up VRAM (Unload LLM models from GPU memory)")
+        if self.latency_label.text() == "Freed!":
+            self.latency_label.setText("")
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:

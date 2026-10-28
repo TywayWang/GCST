@@ -137,6 +137,12 @@ class TrayApp(QObject):
         test_action.triggered.connect(self._test_popup)
         menu.addAction(test_action)
 
+        # Free VRAM Action
+        free_vram_action = QAction("⚡ Free up VRAM", menu)
+        free_vram_action.setToolTip("Unload active LLM models from GPU VRAM")
+        free_vram_action.triggered.connect(self._free_vram)
+        menu.addAction(free_vram_action)
+
         menu.addSeparator()
 
         # Quit Action
@@ -220,6 +226,16 @@ class TrayApp(QObject):
         else:
             self.ollama_action.setText("Ollama: ✗ Offline")
             self._populate_model_menu([])
+
+    def _free_vram(self):
+        st_log("TrayApp: Free VRAM requested from tray menu")
+        def on_done(success: bool, msg: str):
+            if success:
+                st_log("TrayApp: VRAM successfully freed")
+                self.tray_icon.showMessage("ST Translator", "VRAM Freed! LLM unloaded from GPU memory.", QSystemTrayIcon.MessageIcon.Information, 2000)
+            else:
+                st_log(f"TrayApp: VRAM free error: {msg}")
+        OllamaService.shared().free_vram(on_done)
 
     def _test_popup(self):
         st_log("TrayApp: Test popup triggered")

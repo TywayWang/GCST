@@ -1043,6 +1043,16 @@ async function updateTray() {
       enabled: false
     },
     {
+      label: 'Free up VRAM (Unload Ollama Models)',
+      enabled: isOllamaOnline,
+      click: async () => {
+        if (ollamaClient) {
+          const res = await ollamaClient.freeVram();
+          console.log('[GC] Free VRAM via tray result:', res);
+        }
+      }
+    },
+    {
       label: 'Check System Clipboard in GC',
       click: () => {
         checkClipboardText();
@@ -1378,6 +1388,13 @@ app.whenReady().then(async () => {
       models,
       activeModel: ollamaClient ? ollamaClient.activeModel : 'gemma4:e4b'
     });
+  });
+
+  ipcMain.handle('free-vram', async () => {
+    if (!ollamaClient) {
+      return { success: false, error: 'Ollama client not available' };
+    }
+    return await ollamaClient.freeVram();
   });
 
   ipcMain.on('switch-model', (event, modelName) => {

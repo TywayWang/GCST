@@ -120,6 +120,49 @@ public class OllamaService: NSObject, URLSessionDataDelegate {
         }
     }
 
+    public func freeVRAM(completion: ((Bool, String) -> Void)? = nil) {
+        guard let psUrl = URL(string: "\(host)/api/ps") else {
+            completion?(false, "Invalid URL")
+            return
+        }
+
+        URLSession.shared.dataTask(with: psUrl) { [weak self] data, response, error in
+            guard let self = self else { return }
+            var modelsToUnload = Set<String>()
+            if let data = data,
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let models = json["models"] as? [[String: Any]] {
+                for m in models {
+                    if let name = (m["name"] as? String) ?? (m["model"] as? String), !name.isEmpty {
+                        modelsToUnload.insert(name)
+                    }
+                }
+            }
+            if !self.modelName.isEmpty {
+                modelsToUnload.insert(self.modelName)
+            }
+
+            let group = DispatchGroup()
+            for m in modelsToUnload {
+                guard let genUrl = URL(string: "\(self.host)/api/generate") else { continue }
+                var req = URLRequest(url: genUrl)
+                req.httpMethod = "POST"
+                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                let body: [String: Any] = ["model": m, "keep_alive": 0]
+                req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+                req.timeoutInterval = 5.0
+                group.enter()
+                URLSession.shared.dataTask(with: req) { _, _, _ in
+                    group.leave()
+                }.resume()
+            }
+
+            group.notify(queue: .main) {
+                completion?(true, "VRAM Freed!")
+            }
+        }.resume()
+    }
+
     public func cancelCurrentTranslation() {
         currentTask?.cancel()
         currentTask = nil

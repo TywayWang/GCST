@@ -53,6 +53,7 @@ const btnUndoText = document.getElementById('btnUndoText');
 const hotkeyUndoPill = document.getElementById('hotkeyUndoPill');
 const btnCopyHotkey = document.getElementById('btnCopyHotkey');
 const btnCopyText = document.getElementById('btnCopyText');
+const btnFreeVram = document.getElementById('btnFreeVram');
 const btnClear = document.getElementById('btnClear');
 const metaLatency = document.getElementById('metaLatency');
 const btnModelSelector = document.getElementById('btnModelSelector');
@@ -248,6 +249,43 @@ window.addEventListener('keydown', (e) => {
 // -------------------------------------------------------------
 // UI Actions
 // -------------------------------------------------------------
+if (btnFreeVram) {
+  btnFreeVram.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (btnFreeVram.classList.contains('freeing')) return;
+
+    if (typeof playPopSound === 'function') playPopSound();
+    btnFreeVram.classList.add('freeing');
+    btnFreeVram.title = 'Freeing VRAM...';
+
+    try {
+      const res = await ipcRenderer.invoke('free-vram');
+      btnFreeVram.classList.remove('freeing');
+      btnFreeVram.classList.add('freed');
+      btnFreeVram.title = 'VRAM Freed!';
+
+      if (metaLatency) {
+        const origHtml = metaLatency.innerHTML;
+        metaLatency.innerHTML = '<span style="color: #4ade80; font-weight: 600;">Freed!</span>';
+        setTimeout(() => {
+          metaLatency.innerHTML = origHtml;
+        }, 2200);
+      }
+
+      setTimeout(() => {
+        btnFreeVram.classList.remove('freed');
+        btnFreeVram.title = 'Free up VRAM (Unload models from GPU memory)';
+      }, 2200);
+    } catch (err) {
+      btnFreeVram.classList.remove('freeing');
+      btnFreeVram.title = 'Error freeing VRAM';
+      setTimeout(() => {
+        btnFreeVram.title = 'Free up VRAM (Unload models from GPU memory)';
+      }, 2200);
+    }
+  });
+}
+
 btnClear.addEventListener('click', (e) => {
   e.stopPropagation();
   ipcRenderer.send('clear-buffer-manual', { targetId: currentTargetId });
