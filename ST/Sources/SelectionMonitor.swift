@@ -131,6 +131,12 @@ public class SelectionMonitor {
     // MARK: - Event Dispatchers
 
     private func handleNSEvent(_ event: NSEvent) {
+        if event.type == .keyDown && event.keyCode == 53 { // Esc key
+            STLog("SelectionMonitor: Esc key pressed, requesting dismiss")
+            delegate?.didDismissRequested()
+            return
+        }
+
         guard isEnabled else { return }
 
         switch event.type {
@@ -138,11 +144,6 @@ public class SelectionMonitor {
             processMouseDown(at: NSEvent.mouseLocation)
         case .leftMouseUp:
             processMouseUp(at: NSEvent.mouseLocation, clickCount: event.clickCount)
-        case .keyDown:
-            if event.keyCode == 53 { // Esc key
-                STLog("SelectionMonitor: Esc key pressed, requesting dismiss")
-                delegate?.didDismissRequested()
-            }
         default:
             break
         }

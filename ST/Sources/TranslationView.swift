@@ -48,9 +48,11 @@ public class TranslationViewModel: ObservableObject {
     @Published public var availableModels: [String] = ["gemma4:e4b"]
     @Published public var isFreeingVRAM: Bool = false
     @Published public var vramFreedSuccess: Bool = false
+    @Published public var isPaused: Bool = false
 
     public var isPinned: Bool = false
     public var onClose: (() -> Void)?
+    public var onTogglePause: ((Bool) -> Void)?
     private var startTime: Date?
 
     public var effectiveSourceLang: String {
@@ -172,6 +174,11 @@ public class TranslationViewModel: ObservableObject {
         }
     }
 
+    public func togglePause() {
+        isPaused.toggle()
+        onTogglePause?(isPaused)
+    }
+
     public func swapLanguages() {
         let tempLang = sourceLang
         sourceLang = targetLang
@@ -225,6 +232,36 @@ public class TranslationViewModel: ObservableObject {
             sourceMode: sMode,
             targetMode: tMode
         )
+    }
+}
+
+struct PausePlayIcon: View {
+    var isPaused: Bool
+    var color: Color
+    var size: CGFloat = 13
+
+    var body: some View {
+        Canvas { context, sz in
+            let scale = sz.width / 24.0
+            var path = Path()
+
+            if isPaused {
+                // Play icon (triangle pointing right)
+                path.move(to: CGPoint(x: 7 * scale, y: 4.5 * scale))
+                path.addLine(to: CGPoint(x: 18.5 * scale, y: 12 * scale))
+                path.addLine(to: CGPoint(x: 7 * scale, y: 19.5 * scale))
+                path.closeSubpath()
+                context.fill(path, with: .color(color))
+            } else {
+                // Pause icon (two vertical rounded bars)
+                let bar1 = CGRect(x: 6 * scale, y: 4.5 * scale, width: 3.5 * scale, height: 15 * scale)
+                let bar2 = CGRect(x: 14.5 * scale, y: 4.5 * scale, width: 3.5 * scale, height: 15 * scale)
+                path.addRoundedRect(in: bar1, cornerSize: CGSize(width: 1 * scale, height: 1 * scale))
+                path.addRoundedRect(in: bar2, cornerSize: CGSize(width: 1 * scale, height: 1 * scale))
+                context.fill(path, with: .color(color))
+            }
+        }
+        .frame(width: size, height: size)
     }
 }
 
@@ -379,6 +416,24 @@ public struct TranslationView: View {
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(Color(red: 0.28, green: 0.33, blue: 0.41)) // #475569
                 }
+
+                // Pause / Resume Hover Translation Button
+                Button(action: {
+                    viewModel.togglePause()
+                }) {
+                    PausePlayIcon(
+                        isPaused: viewModel.isPaused,
+                        color: viewModel.isPaused
+                            ? Color(red: 0.96, green: 0.62, blue: 0.15)
+                            : Color(red: 0.39, green: 0.45, blue: 0.55),
+                        size: 13
+                    )
+                    .padding(3)
+                    .background(viewModel.isPaused ? Color(red: 0.96, green: 0.62, blue: 0.15).opacity(0.12) : Color.white.opacity(0.04))
+                    .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+                .help(viewModel.isPaused ? "Resume hover translation (Paused)" : "Pause hover translation")
 
                 // Free VRAM Button
                 Button(action: {

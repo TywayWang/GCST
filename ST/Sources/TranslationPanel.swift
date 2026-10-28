@@ -12,6 +12,10 @@ public class TranslationPanel: NSPanel {
         return viewModel.isPinned
     }
 
+    public func updatePausedState(_ isPaused: Bool) {
+        viewModel.isPaused = isPaused
+    }
+
     private init() {
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 415, height: 185),
@@ -33,6 +37,10 @@ public class TranslationPanel: NSPanel {
             self?.dismissAnimated(force: true)
         }
 
+        viewModel.onTogglePause = { isPaused in
+            AppDelegate.shared?.setHoverEnabled(!isPaused)
+        }
+
         let view = TranslationView(viewModel: viewModel)
         let hosting = NSHostingView(rootView: view)
         hosting.autoresizingMask = [.width, .height]
@@ -44,6 +52,9 @@ public class TranslationPanel: NSPanel {
     public func show(at point: NSPoint, selectionRect: NSRect, text: String) {
         showTimestamp = Date()
         viewModel.isPinned = false
+        if let appDel = AppDelegate.shared {
+            viewModel.isPaused = !appDel.isHoverEnabled
+        }
         viewModel.startTranslation(source: text)
 
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }) ?? NSScreen.main else {
@@ -86,6 +97,9 @@ public class TranslationPanel: NSPanel {
     public func showCenter(text: String) {
         showTimestamp = Date()
         viewModel.isPinned = false
+        if let appDel = AppDelegate.shared {
+            viewModel.isPaused = !appDel.isHoverEnabled
+        }
         viewModel.startTranslation(source: text)
 
         guard let screen = NSScreen.main else { return }

@@ -65,6 +65,8 @@ class STIPCServer:
                         enabled = parent.monitor.is_enabled
                     else:
                         enabled = False
+                    if hasattr(parent, 'window') and parent.window:
+                        parent.window.set_paused_state(not enabled)
                     st_log(f"STIPCServer: toggle -> is_enabled={enabled}")
                     response_data = {"enabled": enabled}
 

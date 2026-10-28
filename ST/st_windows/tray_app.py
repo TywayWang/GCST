@@ -202,6 +202,8 @@ class TrayApp(QObject):
 
     def _toggle_active(self, checked: bool):
         self.selection_monitor.is_enabled = checked
+        if hasattr(self, 'translation_window') and self.translation_window:
+            self.translation_window.set_paused_state(not checked)
         st_log(f"toggle_active: is_enabled is now {checked}")
 
     def _set_hover_delay(self, delay: float):

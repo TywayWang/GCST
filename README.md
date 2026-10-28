@@ -86,6 +86,7 @@ GCST/
 * **Hover Text Translation**: Highlight any text in any application (browser, PDF, code editor, office apps) and hover your cursor for ~350ms. A sleek translation panel floats above your selection.
 * **Acrylic Non-Activating Window**: Uses `WS_EX_NOACTIVATE` and `Qt.WindowType.ToolTip` so target windows retain keyboard and focus state.
 * **Pin & Copy**: Includes pin lock button to keep translation open for detailed reading, plus 1-click clipboard copy.
+* **In-Window Controls**: Pause / Resume toggle for hover translation directly on the window header (left of Free VRAM button), model selector, and GPU VRAM release.
 * **Multilingual Flexibility**: Configurable Source (`Auto`, `English`, `Chinese`, etc.) and Target language via System Tray or `config.json`.
 
 ---

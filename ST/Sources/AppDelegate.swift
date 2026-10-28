@@ -3,6 +3,7 @@ import ApplicationServices
 import Network
 
 public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SelectionMonitorDelegate {
+    public static var shared: AppDelegate?
     private var statusItem: NSStatusItem?
     private let selectionMonitor = SelectionMonitor()
     private var isEnabledMenuItem: NSMenuItem?
@@ -13,6 +14,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Selec
     private var isExplicitStandalone: Bool = false
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
+        AppDelegate.shared = self
         STLog("ST applicationDidFinishLaunching: started. PID: \(ProcessInfo.processInfo.processIdentifier)")
 
         // Check Accessibility permission and prompt if needed
@@ -89,8 +91,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Selec
 
             var responseBody = "{\"ok\":true}"
             if req.contains("GET /toggle") {
-                self.selectionMonitor.isEnabled.toggle()
-                self.isEnabledMenuItem?.state = self.selectionMonitor.isEnabled ? .on : .off
+                self.setHoverEnabled(!self.selectionMonitor.isEnabled)
                 responseBody = "{\"enabled\":\(self.selectionMonitor.isEnabled)}"
                 STLog("IPC command: toggle -> isEnabled: \(self.selectionMonitor.isEnabled)")
             } else if req.contains("GET /status") {
@@ -281,10 +282,19 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Selec
         }
     }
 
+    public var isHoverEnabled: Bool {
+        return selectionMonitor.isEnabled
+    }
+
+    public func setHoverEnabled(_ enabled: Bool) {
+        selectionMonitor.isEnabled = enabled
+        isEnabledMenuItem?.state = enabled ? .on : .off
+        TranslationPanel.shared.updatePausedState(!enabled)
+        STLog("setHoverEnabled: isEnabled is now \(enabled)")
+    }
+
     @objc private func toggleEnabled() {
-        selectionMonitor.isEnabled.toggle()
-        isEnabledMenuItem?.state = selectionMonitor.isEnabled ? .on : .off
-        STLog("toggleEnabled: isEnabled is now \(selectionMonitor.isEnabled)")
+        setHoverEnabled(!selectionMonitor.isEnabled)
     }
 
     @objc private func checkOllamaConnection() {

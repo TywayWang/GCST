@@ -21,6 +21,8 @@ Follows your exact 3-step reading workflow:
 - **Local & Private**: Powered by your local Ollama instance (`http://localhost:11434`) using `gemma4:e4b`. 100% offline, zero data leaves your PC.
 - **Real-Time Streaming**: Chinese translations stream in token-by-token with sub-second latency (~250ms–550ms).
 - **Interactive Controls**:
+  - ⏸ / ▶ **Pause / Resume Button**: Instantly pause or resume hover translation directly from the translation window header.
+  - ⚡ **Free VRAM Button**: One-click GPU VRAM release by unloading active Ollama models.
   - 📌 **Pin Button**: Pin the popup window so it stays visible while you take notes.
   - 📋 **Copy Button**: One-click copy of the Chinese translation to clipboard with visual "Copied" feedback.
   - ✕ **Close / Esc**: Instantly dismisses the popup (also auto-dismisses when you move your cursor away or click outside).

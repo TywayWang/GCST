@@ -92,6 +92,15 @@ def main():
     monitor = SelectionMonitor(hover_delay=hover_delay, move_dismiss_radius=move_dismiss_radius)
     coordinator = AppCoordinator(monitor, window)
 
+    # Wire pause toggle callback between TranslationWindow and SelectionMonitor
+    def on_pause_toggled(is_paused: bool):
+        monitor.is_enabled = not is_paused
+        if tray:
+            tray.active_action.setChecked(not is_paused)
+        st_log(f"Coordinator: Hover translation {'paused' if is_paused else 'resumed'}")
+
+    window.pause_toggled_callback = on_pause_toggled
+
     # Check standalone mode vs GCST unified suite mode (matching macOS ST behavior)
     is_standalone = "--standalone" in sys.argv or os.environ.get("ST_STANDALONE") == "1"
 

@@ -2,7 +2,7 @@ import sys
 import time
 import ctypes
 from ctypes import c_int, byref
-from typing import Optional, List
+from typing import Optional, List, Callable
 
 from PyQt6.QtCore import Qt, QPoint, QRectF, pyqtSignal, QTimer, QSize, QByteArray
 from PyQt6.QtSvg import QSvgRenderer
@@ -103,10 +103,13 @@ class TranslationWindow(QWidget):
     translation_failed = pyqtSignal(str)
     model_changed = pyqtSignal(str)
     vram_freed = pyqtSignal(bool, str)
+    pause_toggled = pyqtSignal(bool)
 
     def __init__(self):
         super().__init__()
         self.is_pinned: bool = False
+        self.is_paused: bool = False
+        self.pause_toggled_callback: Optional[Callable[[bool], None]] = None
         self.is_menu_open: bool = False
         self._start_time: float = 0.0
         self._original_text: str = ""
@@ -248,6 +251,14 @@ class TranslationWindow(QWidget):
         self.latency_label.setStyleSheet("color: #475569; background: transparent; border: none;")
         self.latency_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         header_layout.addWidget(self.latency_label)
+
+        # --- Pause / Resume Hover Translation Button ---
+        self.pause_btn = QPushButton()
+        self.pause_btn.setFixedSize(22, 22)
+        self.pause_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._update_pause_icon()
+        self.pause_btn.clicked.connect(self._toggle_pause)
+        header_layout.addWidget(self.pause_btn)
 
         # --- Free VRAM Button ---
         self.vram_btn = QPushButton()
@@ -559,6 +570,61 @@ class TranslationWindow(QWidget):
 
     # MARK: - Window Dragging Anywhere Inside Card
 
+    def _create_pause_icon(self, is_paused: bool, color: str = "#64748b") -> QIcon:
+        if is_paused:
+            svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="{color}" stroke="none">
+  <polygon points="7 4.5 18.5 12 7 19.5 7 4.5"></polygon>
+</svg>'''
+        else:
+            svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="{color}" stroke="none">
+  <rect x="6" y="4.5" width="3.5" height="15" rx="1"></rect>
+  <rect x="14.5" y="4.5" width="3.5" height="15" rx="1"></rect>
+</svg>'''
+        renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
+        pix = QPixmap(16, 16)
+        pix.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pix)
+        renderer.render(p)
+        p.end()
+        return QIcon(pix)
+
+    def _update_pause_icon(self):
+        if hasattr(self, "pause_btn"):
+            color = "#f59e0b" if self.is_paused else "#64748b"
+            self.pause_btn.setIcon(self._create_pause_icon(self.is_paused, color))
+            self.pause_btn.setIconSize(QSize(13, 13))
+            tip = "Resume hover translation (Paused)" if self.is_paused else "Pause hover translation"
+            self.pause_btn.setToolTip(tip)
+            bg = "rgba(245, 158, 11, 0.12)" if self.is_paused else "transparent"
+            hover_bg = "rgba(245, 158, 11, 0.22)" if self.is_paused else "rgba(56, 189, 248, 0.12)"
+            self.pause_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {bg};
+                    border: none;
+                    border-radius: 4px;
+                    padding: 3px;
+                }}
+                QPushButton:hover {{
+                    background: {hover_bg};
+                }}
+                QPushButton:pressed {{
+                    background: {hover_bg};
+                }}
+            """)
+
+    def _toggle_pause(self):
+        self.is_paused = not self.is_paused
+        st_log(f"TranslationWindow: Pause toggled -> is_paused={self.is_paused}")
+        self._update_pause_icon()
+        self.pause_toggled.emit(self.is_paused)
+        if self.pause_toggled_callback:
+            self.pause_toggled_callback(self.is_paused)
+
+    def set_paused_state(self, is_paused: bool):
+        if self.is_paused != is_paused:
+            self.is_paused = is_paused
+            self._update_pause_icon()
+
     def _create_vram_icon(self, color: str = "#64748b") -> QIcon:
         svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <rect x="4" y="4" width="16" height="16" rx="2"></rect>
@@ -642,6 +708,7 @@ class TranslationWindow(QWidget):
         self._original_text = text
         self._translated_text = ""
         self.latency_label.setText("")
+        self._update_pause_icon()
 
         # Update source language indicator if auto-detecting
         effective_source_lang = self.source_lang
