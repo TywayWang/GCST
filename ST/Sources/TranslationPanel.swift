@@ -13,7 +13,9 @@ public class TranslationPanel: NSPanel {
     }
 
     public func updatePausedState(_ isPaused: Bool) {
-        viewModel.isPaused = isPaused
+        if viewModel.isPaused != isPaused {
+            viewModel.isPaused = isPaused
+        }
     }
 
     private init() {

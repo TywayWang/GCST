@@ -73,9 +73,6 @@ class SelectionMonitor(QObject):
             self._mouse_listener = None
 
     def _on_click(self, x: int, y: int, button, pressed: bool):
-        if not self.is_enabled:
-            return
-
         if button != mouse.Button.left:
             return
 
@@ -91,7 +88,7 @@ class SelectionMonitor(QObject):
             self._mouse_down_pos = (x, y)
             self._mouse_down_time = now
 
-            # Outside click detection:
+            # Outside click detection (ALWAYS active so panel can be dismissed):
             if self.is_panel_visible():
                 if not self.is_point_inside_panel(x, y):
                     st_log("SelectionMonitor: Outside click detected -> requesting dismiss")
@@ -108,7 +105,10 @@ class SelectionMonitor(QObject):
             self._last_click_pos = (x, y)
 
         else:
-            # Mouse button released (Up)
+            # Mouse button released (Up): only trigger hover check if translation is enabled
+            if not self.is_enabled:
+                return
+
             drag_dist = math.hypot(x - self._mouse_down_pos[0], y - self._mouse_down_pos[1])
 
             # Selection gesture: drag distance >= 6.0px (matching macOS wasDrag > 6.0) or double/triple click

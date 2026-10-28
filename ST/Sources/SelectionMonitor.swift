@@ -90,7 +90,8 @@ public class SelectionMonitor {
 
     private func setupCGEventTap() {
         let mask: CGEventMask = (1 << CGEventType.leftMouseDown.rawValue) |
-                                (1 << CGEventType.leftMouseUp.rawValue)
+                                (1 << CGEventType.leftMouseUp.rawValue) |
+                                (1 << CGEventType.keyDown.rawValue)
 
         let observer = Unmanaged.passUnretained(self).toOpaque()
 
@@ -110,6 +111,16 @@ public class SelectionMonitor {
                 } else if type == .leftMouseUp {
                     let clickCount = event.getIntegerValueField(.mouseEventClickState)
                     monitor.processMouseUp(at: mouseLoc, clickCount: Int(clickCount))
+                } else if type == .keyDown {
+                    let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+                    if keyCode == 53 { // Esc key
+                        if monitor.delegate?.isPanelVisible() == true {
+                            STLog("SelectionMonitor (CGEventTap): Esc key pressed, requesting dismiss")
+                            DispatchQueue.main.async {
+                                monitor.delegate?.didDismissRequested()
+                            }
+                        }
+                    }
                 }
 
                 return Unmanaged.passUnretained(event)
@@ -132,12 +143,12 @@ public class SelectionMonitor {
 
     private func handleNSEvent(_ event: NSEvent) {
         if event.type == .keyDown && event.keyCode == 53 { // Esc key
-            STLog("SelectionMonitor: Esc key pressed, requesting dismiss")
-            delegate?.didDismissRequested()
+            if delegate?.isPanelVisible() == true {
+                STLog("SelectionMonitor: Esc key pressed, requesting dismiss")
+                delegate?.didDismissRequested()
+            }
             return
         }
-
-        guard isEnabled else { return }
 
         switch event.type {
         case .leftMouseDown:
@@ -181,6 +192,7 @@ public class SelectionMonitor {
     }
 
     private func processMouseUp(at point: NSPoint, clickCount: Int) {
+        guard isEnabled else { return }
         let now = Date()
         guard now.timeIntervalSince(lastMouseUpProcessed) > 0.04 else { return } // Deduplicate
         lastMouseUpProcessed = now

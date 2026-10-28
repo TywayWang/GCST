@@ -283,6 +283,29 @@ class TranslationWindow(QWidget):
         self.vram_btn.clicked.connect(self._free_vram)
         header_layout.addWidget(self.vram_btn)
 
+        # --- Close Button ---
+        self.close_btn = QPushButton()
+        self.close_btn.setFixedSize(22, 22)
+        self.close_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.close_btn.setToolTip("Close Window (Esc)")
+        self.close_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                border-radius: 4px;
+                padding: 3px;
+            }
+            QPushButton:hover {
+                background: rgba(239, 68, 68, 0.15);
+            }
+            QPushButton:pressed {
+                background: rgba(239, 68, 68, 0.25);
+            }
+        """)
+        self._update_close_icon("#64748b")
+        self.close_btn.clicked.connect(self.dismiss)
+        header_layout.addWidget(self.close_btn)
+
         layout.addLayout(header_layout)
 
         # Subtle divider line
@@ -650,6 +673,24 @@ class TranslationWindow(QWidget):
         if hasattr(self, "vram_btn"):
             self.vram_btn.setIcon(self._create_vram_icon(color))
             self.vram_btn.setIconSize(QSize(14, 14))
+
+    def _create_close_icon(self, color: str = "#64748b") -> QIcon:
+        svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+  <line x1="18" y1="6" x2="6" y2="18"></line>
+  <line x1="6" y1="6" x2="18" y2="18"></line>
+</svg>'''
+        renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
+        pix = QPixmap(16, 16)
+        pix.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pix)
+        renderer.render(p)
+        p.end()
+        return QIcon(pix)
+
+    def _update_close_icon(self, color: str = "#64748b"):
+        if hasattr(self, "close_btn"):
+            self.close_btn.setIcon(self._create_close_icon(color))
+            self.close_btn.setIconSize(QSize(12, 12))
 
     def _free_vram(self):
         st_log("TranslationWindow: Free VRAM requested by user")

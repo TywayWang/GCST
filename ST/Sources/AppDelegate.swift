@@ -289,7 +289,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Selec
     public func setHoverEnabled(_ enabled: Bool) {
         selectionMonitor.isEnabled = enabled
         isEnabledMenuItem?.state = enabled ? .on : .off
-        TranslationPanel.shared.updatePausedState(!enabled)
+        DispatchQueue.main.async {
+            TranslationPanel.shared.updatePausedState(!enabled)
+        }
         STLog("setHoverEnabled: isEnabled is now \(enabled)")
     }
 

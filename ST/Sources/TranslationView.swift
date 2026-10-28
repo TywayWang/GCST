@@ -176,7 +176,10 @@ public class TranslationViewModel: ObservableObject {
 
     public func togglePause() {
         isPaused.toggle()
-        onTogglePause?(isPaused)
+        let paused = isPaused
+        DispatchQueue.main.async { [weak self] in
+            self?.onTogglePause?(paused)
+        }
     }
 
     public func swapLanguages() {
@@ -451,6 +454,21 @@ public struct TranslationView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Free up VRAM (Unload LLM models from GPU memory)")
+
+                // Close Button
+                Button(action: {
+                    viewModel.onClose?()
+                }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(Color(red: 0.39, green: 0.45, blue: 0.55))
+                        .frame(width: 13, height: 13)
+                        .padding(3)
+                        .background(Color.white.opacity(0.04))
+                        .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+                .help("Close Window (Esc)")
             }
 
             // Divider line
