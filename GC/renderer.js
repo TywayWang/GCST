@@ -233,6 +233,16 @@ window.addEventListener('keydown', (e) => {
     return;
   }
 
+  // Hotkey: Ctrl+U (Win11) / Control+U (macOS) and Ctrl+K (Win11) / Control+K (macOS) inside GC Editor
+  const isCtrlU = e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.key === 'u' || e.key === 'U' || e.code === 'KeyU');
+  const isCtrlK = e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.key === 'k' || e.key === 'K' || e.code === 'KeyK');
+  if ((isCtrlU || isCtrlK) && (document.activeElement === editorTextBox || (editorTextBox && editorTextBox.contains(document.activeElement))) && !isReviewMode) {
+    e.preventDefault();
+    e.stopPropagation();
+    handleEditorDeletionHotkey(isCtrlU ? 'left' : 'right');
+    return;
+  }
+
   if (e.key === 'Escape') {
     ipcRenderer.send('close-hovering-window', { targetId: currentTargetId });
   } else if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
@@ -440,12 +450,74 @@ function focusDirectInput() {
   }
 }
 
+/**
+ * Handle cursor-relative text deletion in GC Editor:
+ * - direction 'left'  (Ctrl+U on Win11 / Control+U on macOS): remove all text ahead of cursor
+ * - direction 'right' (Ctrl+K on Win11 / Control+K on macOS): remove all text behind cursor
+ */
+function handleEditorDeletionHotkey(direction) {
+  if (!editorTextBox || isReviewMode) return;
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+
+  try {
+    if (direction === 'left') {
+      // Extend backward to the paragraph boundary (all text ahead / left of cursor)
+      sel.modify('extend', 'backward', 'paragraphboundary');
+      if (sel.isCollapsed) {
+        // If already at the start of a paragraph, delete the preceding newline
+        sel.modify('extend', 'backward', 'character');
+      }
+      document.execCommand('delete');
+    } else if (direction === 'right') {
+      // Extend forward to the paragraph boundary (all text behind / right of cursor)
+      sel.modify('extend', 'forward', 'paragraphboundary');
+      if (sel.isCollapsed) {
+        // If already at the end of a paragraph, delete the succeeding newline
+        sel.modify('extend', 'forward', 'character');
+      }
+      document.execCommand('delete');
+    }
+
+    // Ensure state and IPC sync if execCommand did not trigger input event
+    const text = (editorTextBox.innerText || '').replace(/\r\n/g, '\n');
+    if (text !== currentOriginalText) {
+      editorTextBox.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  } catch (err) {
+    console.error('Failed to execute editor deletion hotkey:', err);
+  }
+}
+
 // Direct typing & editing inside editorTextBox
 if (editorTextBox) {
   editorTextBox.addEventListener('focus', () => {
     if (!isReviewMode) {
       isDirectInputActive = true;
       setInputModeUI('GC Editor');
+    }
+  });
+
+  editorTextBox.addEventListener('keydown', (e) => {
+    if (isReviewMode) return;
+
+    // Hotkey: Ctrl+U (Win11) / Control+U (macOS) -> Remove all text ahead of cursor (left side)
+    // Hotkey: Ctrl+K (Win11) / Control+K (macOS) -> Remove all text behind cursor (right side)
+    const isCtrlU = e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.key === 'u' || e.key === 'U' || e.code === 'KeyU');
+    const isCtrlK = e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.key === 'k' || e.key === 'K' || e.code === 'KeyK');
+
+    if (isCtrlU) {
+      e.preventDefault();
+      e.stopPropagation();
+      handleEditorDeletionHotkey('left');
+      return;
+    }
+
+    if (isCtrlK) {
+      e.preventDefault();
+      e.stopPropagation();
+      handleEditorDeletionHotkey('right');
+      return;
     }
   });
 

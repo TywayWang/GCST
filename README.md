@@ -75,9 +75,11 @@ GCST/
 * **British English Localization**: Enforces standard Oxford/Cambridge spelling (e.g. *colour*, *analyse*, *catalogue*, *behaviour*), punctuation, and tone.
 * **Non-Blocking Minimalist HUD**: Displays non-activating floating suggestions right above your cursor without stealing active window focus or blocking other apps.
 * **Hotkeys**:
-  * <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>X</kbd>: Trigger instant grammar check on buffered text.
-  * <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Z</kbd>: Instant undo / revert correction.
-  * <kbd>Enter</kbd> (in HUD): Apply suggested correction.
+  * <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>X</kbd> (Win) / <kbd>Shift</kbd> + <kbd>Cmd</kbd> + <kbd>X</kbd> (Mac): Trigger instant grammar check on buffered text / focus editor.
+  * <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Z</kbd> (Win) / <kbd>Shift</kbd> + <kbd>Cmd</kbd> + <kbd>Z</kbd> (Mac): Trigger check on typed text.
+  * <kbd>Ctrl</kbd> + <kbd>U</kbd> (Win) / <kbd>Control</kbd> + <kbd>U</kbd> (Mac): Remove all text ahead (left) of the cursor in GC Editor.
+  * <kbd>Ctrl</kbd> + <kbd>K</kbd> (Win) / <kbd>Control</kbd> + <kbd>K</kbd> (Mac): Remove all text behind (right) of the cursor in GC Editor.
+  * <kbd>Enter</kbd> (in HUD): Apply suggested correction (or newline in GC Editor).
   * <kbd>Esc</kbd> (in HUD): Dismiss HUD.
 
 ### 2. `ST` (On-Screen Hover Translator)

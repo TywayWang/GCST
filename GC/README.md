@@ -48,6 +48,8 @@
 |---|---|---|---|
 | **Open GC & Direct Input** | **`Shift + Cmd + X`** | **`Ctrl + Alt + X`** | Input Mode (opens UI & focuses editor) |
 | **Review English** | **`Shift + Cmd + Z`** | **`Ctrl + Alt + Z`** | Finished typing (or `Ctrl+Enter`) |
+| **Delete Ahead of Cursor** | **`Control + U`** | **`Ctrl + U`** | GC Editor (removes all text ahead / left of cursor) |
+| **Delete Behind Cursor** | **`Control + K`** | **`Ctrl + K`** | GC Editor (removes all text behind / right of cursor) |
 | **Undo Corrections** | **`Cmd + Z`** | **`Ctrl + Z`** | Review Mode (undoes corrections & returns to Input Mode) |
 | **Copy & Auto-Paste** | **`Shift + Cmd + X`** | **`Ctrl + Alt + X`** | Review Mode (copies & auto-pastes to linked app) |
 | **Turn ON / OFF** | System Tray Menu | System Tray Menu | Background state toggle |
