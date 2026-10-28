@@ -228,6 +228,57 @@ public class TranslationViewModel: ObservableObject {
     }
 }
 
+struct CpuChipIcon: View {
+    var color: Color
+    var size: CGFloat = 13
+
+    var body: some View {
+        Canvas { context, sz in
+            let scale = sz.width / 24.0
+            var path = Path()
+
+            // Outer rounded rect (x: 4, y: 4, width: 16, height: 16, rx: 2)
+            let outerRect = CGRect(x: 4 * scale, y: 4 * scale, width: 16 * scale, height: 16 * scale)
+            path.addRoundedRect(in: outerRect, cornerSize: CGSize(width: 2 * scale, height: 2 * scale))
+
+            // Inner core rect (x: 9, y: 9, width: 6, height: 6)
+            let innerRect = CGRect(x: 9 * scale, y: 9 * scale, width: 6 * scale, height: 6 * scale)
+            path.addRect(innerRect)
+
+            // Top pins (x1: 9, y1: 1, x2: 9, y2: 4; x1: 15, y1: 1, x2: 15, y2: 4)
+            path.move(to: CGPoint(x: 9 * scale, y: 1 * scale))
+            path.addLine(to: CGPoint(x: 9 * scale, y: 4 * scale))
+            path.move(to: CGPoint(x: 15 * scale, y: 1 * scale))
+            path.addLine(to: CGPoint(x: 15 * scale, y: 4 * scale))
+
+            // Bottom pins (x1: 9, y1: 20, x2: 9, y2: 23; x1: 15, y1: 20, x2: 15, y2: 23)
+            path.move(to: CGPoint(x: 9 * scale, y: 20 * scale))
+            path.addLine(to: CGPoint(x: 9 * scale, y: 23 * scale))
+            path.move(to: CGPoint(x: 15 * scale, y: 20 * scale))
+            path.addLine(to: CGPoint(x: 15 * scale, y: 23 * scale))
+
+            // Right pins (x1: 20, y1: 9, x2: 23, y2: 9; x1: 20, y1: 14, x2: 23, y2: 14)
+            path.move(to: CGPoint(x: 20 * scale, y: 9 * scale))
+            path.addLine(to: CGPoint(x: 23 * scale, y: 9 * scale))
+            path.move(to: CGPoint(x: 20 * scale, y: 14 * scale))
+            path.addLine(to: CGPoint(x: 23 * scale, y: 14 * scale))
+
+            // Left pins (x1: 1, y1: 9, x2: 4, y2: 9; x1: 1, y1: 14, x2: 4, y2: 14)
+            path.move(to: CGPoint(x: 1 * scale, y: 9 * scale))
+            path.addLine(to: CGPoint(x: 4 * scale, y: 9 * scale))
+            path.move(to: CGPoint(x: 1 * scale, y: 14 * scale))
+            path.addLine(to: CGPoint(x: 4 * scale, y: 14 * scale))
+
+            context.stroke(
+                path,
+                with: .color(color),
+                style: StrokeStyle(lineWidth: max(1.2, 1.8 * scale), lineCap: .round, lineJoin: .round)
+            )
+        }
+        .frame(width: size, height: size)
+    }
+}
+
 public struct TranslationView: View {
     @ObservedObject var viewModel: TranslationViewModel
 
@@ -333,16 +384,15 @@ public struct TranslationView: View {
                 Button(action: {
                     viewModel.freeVRAM()
                 }) {
-                    Image(systemName: "memorychip")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(
-                            viewModel.isFreeingVRAM
-                                ? Color(red: 0.22, green: 0.74, blue: 0.97)
-                                : (viewModel.vramFreedSuccess ? Color(red: 0.29, green: 0.87, blue: 0.50) : Color(red: 0.39, green: 0.45, blue: 0.55))
-                        )
-                        .padding(3)
-                        .background(Color.white.opacity(0.04))
-                        .cornerRadius(4)
+                    CpuChipIcon(
+                        color: viewModel.isFreeingVRAM
+                            ? Color(red: 0.22, green: 0.74, blue: 0.97)
+                            : (viewModel.vramFreedSuccess ? Color(red: 0.29, green: 0.87, blue: 0.50) : Color(red: 0.39, green: 0.45, blue: 0.55)),
+                        size: 13
+                    )
+                    .padding(3)
+                    .background(Color.white.opacity(0.04))
+                    .cornerRadius(4)
                 }
                 .buttonStyle(.plain)
                 .help("Free up VRAM (Unload LLM models from GPU memory)")
