@@ -41,9 +41,20 @@ cp "$MACOS_DIR/$APP_NAME" "$BIN_DIR/$APP_NAME"
 # Copy Info.plist
 cp "Resources/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 
-# Proper ad-hoc code signing for TCC / Accessibility compliance
-echo "==> Signing $APP_BUNDLE..."
-codesign --force --deep --sign - "$APP_BUNDLE"
-codesign --force --sign - "$BIN_DIR/$APP_NAME"
+# Code signing: detect persistent developer identity (e.g. ST-Developer) to prevent TCC permission invalidation across rebuilds
+SIGN_IDENTITY="-"
+if security find-identity -p codesigning -v 2>/dev/null | grep -q '"ST-Developer"'; then
+    SIGN_IDENTITY="ST-Developer"
+    echo "==> Signing with persistent identity: $SIGN_IDENTITY (TCC permissions will persist across builds)"
+elif security find-identity -p codesigning -v 2>/dev/null | grep -E -q 'Apple Development|Developer ID Application'; then
+    FIRST_VALID=$(security find-identity -p codesigning -v | grep -E 'Apple Development|Developer ID Application' | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/')
+    SIGN_IDENTITY="$FIRST_VALID"
+    echo "==> Signing with discovered identity: $SIGN_IDENTITY"
+else
+    echo "==> Signing with ad-hoc identity (-) [Tip: Create an 'ST-Developer' certificate in Keychain Access to retain permissions across rebuilds]"
+fi
+
+codesign --force --deep --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
+codesign --force --sign "$SIGN_IDENTITY" "$BIN_DIR/$APP_NAME"
 
 echo "==> Successfully built and signed $APP_BUNDLE and $BIN_DIR/$APP_NAME"
