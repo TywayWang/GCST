@@ -9,6 +9,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Selec
     private var accessibilityMenuItem: NSMenuItem?
     private var ollamaStatusMenuItem: NSMenuItem?
     private var commandListener: NWListener?
+    private var gcWatchdogTimer: Timer?
+    private var isExplicitStandalone: Bool = false
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         STLog("ST applicationDidFinishLaunching: started. PID: \(ProcessInfo.processInfo.processIdentifier)")
@@ -21,13 +23,18 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Selec
         selectionMonitor.delegate = self
         selectionMonitor.start()
 
-        // Set up Menu Bar Status Item (only if in standalone mode; otherwise GCST manages unified tray)
-        let isStandalone = ProcessInfo.processInfo.arguments.contains("--standalone") ||
-                           ProcessInfo.processInfo.environment["ST_STANDALONE"] == "1"
-        if isStandalone {
+        // Set up Menu Bar Status Item
+        isExplicitStandalone = ProcessInfo.processInfo.arguments.contains("--standalone") ||
+                               ProcessInfo.processInfo.environment["ST_STANDALONE"] == "1"
+        if isExplicitStandalone || !isGCRunning() {
             setupStatusBarItem()
         } else {
-            STLog("Running in unified GCST suite mode: menu bar icon is handled by GCST")
+            STLog("Running in unified GCST suite mode with active GC: menu bar icon is handled by GCST")
+        }
+
+        // Start dynamic watchdog: ensure ST is never an invisible ghost process when GC exits
+        if !isExplicitStandalone {
+            startGCWatchdog()
         }
 
         // Start internal IPC command listener on port 11435 for GCST suite coordination
@@ -39,6 +46,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Selec
 
     public func applicationWillTerminate(_ notification: Notification) {
         STLog("ST applicationWillTerminate")
+        gcWatchdogTimer?.invalidate()
+        gcWatchdogTimer = nil
         commandListener?.cancel()
         commandListener = nil
         selectionMonitor.stop()
@@ -155,9 +164,42 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Selec
         checkOllamaConnection()
     }
 
-    // MARK: - Status Bar Setup (Standalone Mode Only)
+    // MARK: - Process Detection & Dynamic Status Bar Supervisor
+
+    private func isGCRunning() -> Bool {
+        for app in NSWorkspace.shared.runningApplications {
+            if let path = app.executableURL?.path, path.contains("/GC/") || path.contains("gc-british-grammar-checker") {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func startGCWatchdog() {
+        gcWatchdogTimer?.invalidate()
+        gcWatchdogTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            let gcActive = self.isGCRunning()
+            if !gcActive && self.statusItem == nil {
+                STLog("GC process exited or inactive: automatically restoring ST menu bar icon")
+                self.setupStatusBarItem()
+            } else if gcActive && self.statusItem != nil && !self.isExplicitStandalone {
+                STLog("GC process active in suite mode: suppressing duplicate ST menu bar icon")
+                self.removeStatusBarItem()
+            }
+        }
+    }
+
+    private func removeStatusBarItem() {
+        guard let item = statusItem else { return }
+        NSStatusBar.system.removeStatusItem(item)
+        statusItem = nil
+    }
+
+    // MARK: - Status Bar Setup
 
     private func setupStatusBarItem() {
+        guard statusItem == nil else { return }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         if let button = statusItem?.button {

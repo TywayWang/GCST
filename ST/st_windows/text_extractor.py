@@ -78,6 +78,19 @@ class TextExtractor:
                 except Exception as e:
                     st_log(f"Strategy 1 (UIAutomation) notice: {e}")
 
+            # Check if foreground window is Windows File Explorer or Desktop (CabinetWClass, Progman, WorkerW)
+            # If so, file selection marquee/clicking must NEVER trigger synthetic Ctrl+C fallback!
+            try:
+                import win32gui
+                hwnd = win32gui.GetForegroundWindow()
+                cls_name = win32gui.GetClassName(hwnd)
+                if cls_name in ("CabinetWClass", "Progman", "WorkerW", "Shell_TrayWnd"):
+                    st_log(f"extract_selected_text: Foreground window is '{cls_name}'. Skipping Ctrl+C fallback to avoid capturing selected files.")
+                    completion(None)
+                    return
+            except Exception:
+                pass
+
             # Strategy 2: Synthetic Ctrl+C with Smart Clipboard Restoration
             st_log("extract_selected_text: Strategy 1 yielded no text, falling back to Strategy 2 (Ctrl+C)...")
             copied = self._extract_via_clipboard()
@@ -144,6 +157,12 @@ class TextExtractor:
             time.sleep(0.025)
             try:
                 win32clipboard.OpenClipboard()
+                # Check for file drop format (CF_HDROP = 15) to avoid translating copied file paths
+                if win32clipboard.IsClipboardFormatAvailable(15):
+                    st_log("extract_selected_text: Clipboard contains file drop payload (CF_HDROP), discarding.")
+                    win32clipboard.CloseClipboard()
+                    return None
+
                 if win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
                     data = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
                     if data and data.strip():

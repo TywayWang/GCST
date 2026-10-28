@@ -50,7 +50,8 @@ public class TextExtractor {
 
         let frontApp = NSWorkspace.shared.frontmostApplication
         let pid = frontApp?.processIdentifier ?? 0
-        STLog("extractSelectedText: target frontmost app = '\(frontApp?.localizedName ?? "unknown")', pid = \(pid)")
+        let bundleId = frontApp?.bundleIdentifier ?? ""
+        STLog("extractSelectedText: target frontmost app = '\(frontApp?.localizedName ?? "unknown")', bundleId = '\(bundleId)', pid = \(pid)")
 
         // Strategy 1: Direct Accessibility SelectedText
         if let axText = getSelectedTextViaAccessibility(pid: pid),
@@ -58,6 +59,14 @@ public class TextExtractor {
             let clean = Self.cleanExtractedText(axText)
             STLog("extractSelectedText: Strategy 1 (AX) succeeded: '\(clean.prefix(40))'")
             completion(clean)
+            return
+        }
+
+        // If the frontmost app is Finder, file selection marquee/clicking must NEVER trigger Copy fallback!
+        // In Finder, copying without a focused editable text field copies file system items, not text.
+        if bundleId == "com.apple.finder" {
+            STLog("extractSelectedText: Frontmost app is Finder and no editable text is selected via AX. Skipping Copy fallback to avoid capturing selected files.")
+            completion(nil)
             return
         }
 
@@ -186,6 +195,18 @@ public class TextExtractor {
 
         func checkPasteboard() {
             if pb.changeCount != initialChangeCount {
+                // Reject file/folder/URL drops or Finder node references
+                let types = pb.types ?? []
+                let hasFilePayload = types.contains(NSPasteboard.PasteboardType("public.file-url")) ||
+                                     types.contains(NSPasteboard.PasteboardType("NSFilenamesPboardType")) ||
+                                     types.contains(NSPasteboard.PasteboardType("com.apple.finder.noderef"))
+                if hasFilePayload {
+                    STLog("getSelectedTextViaCopy: Detected file payload (public.file-url / filenames) instead of pure text; discarding.")
+                    restoreClipboard()
+                    completion(nil)
+                    return
+                }
+
                 let copiedString = pb.string(forType: .string)
                 STLog("getSelectedTextViaCopy: Detected new pasteboard content after \(elapsedMs)ms")
                 restoreClipboard()

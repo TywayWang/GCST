@@ -813,6 +813,10 @@ function testSTPopup() {
 }
 
 function quitGCSTSuite() {
+  if (app.isQuitting) {
+    app.quit();
+    return;
+  }
   app.isQuitting = true;
   try {
     http.get('http://127.0.0.1:11435/quit', { timeout: 500 }, () => {}).on('error', () => {});
@@ -821,7 +825,11 @@ function quitGCSTSuite() {
   setTimeout(() => {
     try {
       const { exec } = require('child_process');
-      exec('pkill -f "ST.app/Contents/MacOS/ST" || true');
+      if (process.platform === 'darwin') {
+        exec('pkill -f "ST.app/Contents/MacOS/ST" || true');
+      } else if (process.platform === 'win32') {
+        exec('taskkill /F /IM pythonw.exe /T 2>nul || true');
+      }
     } catch (e) {}
     app.quit();
   }, 200);
@@ -1444,6 +1452,13 @@ app.whenReady().then(async () => {
       inst.window.setPosition(Math.round(clampedX), Math.round(clampedY));
     }
   });
+});
+
+app.on('before-quit', (e) => {
+  if (!app.isQuitting) {
+    e.preventDefault();
+    quitGCSTSuite();
+  }
 });
 
 app.on('will-quit', () => {
