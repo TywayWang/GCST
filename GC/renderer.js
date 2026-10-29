@@ -98,7 +98,7 @@ if (isMac) {
     btnUndoHotkey.title = 'Undo corrections and return to input mode (Cmd+Z)';
   }
   if (btnCopyHotkey) {
-    btnCopyHotkey.title = 'Copy corrected text and auto-paste (Shift+Cmd+X)';
+    btnCopyHotkey.title = isReviewMode ? 'Copy corrected text and auto-paste (Shift+Cmd+X)' : 'Focus GC editor for direct input (Shift+Cmd+X)';
   }
 }
 
@@ -364,18 +364,28 @@ if (correctionBadge) {
   });
 }
 
-// Copy corrected text (mouse equivalent of Ctrl + Alt + X)
+// Focus editor or copy corrected text (mouse equivalent of Ctrl + Alt + X)
 btnCopyHotkey.addEventListener('click', (e) => {
   e.stopPropagation();
-  const textToCopy = currentCorrectedText || currentOriginalText;
-  if (textToCopy) {
-    ipcRenderer.send('copy-corrected-text', { targetId: currentTargetId, text: textToCopy });
+  if (isReviewMode) {
+    const textToCopy = currentCorrectedText || currentOriginalText;
+    if (textToCopy) {
+      ipcRenderer.send('copy-corrected-text', { targetId: currentTargetId, text: textToCopy });
+    }
+  } else {
+    focusDirectInput();
   }
 });
 
 function setInputModeUI(sourceName = null) {
   isReviewMode = false;
   ipcRenderer.send('set-input-mode', { targetId: currentTargetId });
+  if (btnCopyText) {
+    btnCopyText.textContent = 'Focus';
+  }
+  if (btnCopyHotkey) {
+    btnCopyHotkey.title = isMac ? 'Focus GC editor for direct input (Shift+Cmd+X)' : 'Focus GC editor for direct input (Ctrl+Alt+X)';
+  }
   if (stageLabel) {
     if (sourceName === 'GC Editor' || isDirectInputActive) {
       isDirectInputActive = true;
@@ -553,6 +563,12 @@ if (editorTextBox) {
 
 function setCheckingModeUI() {
   isReviewMode = true;
+  if (btnCopyText) {
+    btnCopyText.textContent = 'Copy';
+  }
+  if (btnCopyHotkey) {
+    btnCopyHotkey.title = isMac ? 'Copy corrected text and auto-paste (Shift+Cmd+X)' : 'Copy corrected text and auto-paste into linked app (Ctrl+Alt+X)';
+  }
   if (stageLabel) {
     stageLabel.textContent = isDirectInputActive ? 'GC Editor' : currentTargetName;
     stageLabel.classList.remove('active');
@@ -589,6 +605,12 @@ function setCheckingModeUI() {
 
 function setReviewedModeUI(hasCorrections) {
   isReviewMode = true;
+  if (btnCopyText) {
+    btnCopyText.textContent = 'Copy';
+  }
+  if (btnCopyHotkey) {
+    btnCopyHotkey.title = isMac ? 'Copy corrected text and auto-paste (Shift+Cmd+X)' : 'Copy corrected text and auto-paste into linked app (Ctrl+Alt+X)';
+  }
   if (stageLabel) {
     stageLabel.textContent = isDirectInputActive ? 'GC Editor' : currentTargetName;
     stageLabel.classList.remove('active');
@@ -1065,7 +1087,14 @@ ipcRenderer.on('copied-feedback', (event, data) => {
 
   setTimeout(() => {
     btnCopyHotkey.classList.remove('copied');
-    btnCopyText.textContent = 'Copy';
+    if (btnCopyText) {
+      btnCopyText.textContent = isReviewMode ? 'Copy' : 'Focus';
+    }
+    if (btnCopyHotkey) {
+      btnCopyHotkey.title = isReviewMode
+        ? (isMac ? 'Copy corrected text and auto-paste (Shift+Cmd+X)' : 'Copy corrected text and auto-paste into linked app (Ctrl+Alt+X)')
+        : (isMac ? 'Focus GC editor for direct input (Shift+Cmd+X)' : 'Focus GC editor for direct input (Ctrl+Alt+X)');
+    }
   }, 1400);
 });
 
