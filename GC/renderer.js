@@ -385,7 +385,11 @@ btnCopyHotkey.addEventListener('click', (e) => {
       ipcRenderer.send('copy-corrected-text', { targetId: currentTargetId, text: textToCopy });
     }
   } else {
-    focusDirectInput();
+    if (isDirectInputActive && document.hasFocus() && document.activeElement === editorTextBox) {
+      unfocusDirectInput();
+    } else {
+      focusDirectInput();
+    }
   }
 });
 
@@ -489,6 +493,29 @@ function focusDirectInput() {
       sel.addRange(range);
     } catch (e) {}
   }
+}
+
+function unfocusDirectInput() {
+  if (isReviewMode) return;
+  isDirectInputActive = false;
+  if (editorTextBox && document.activeElement === editorTextBox) {
+    editorTextBox.blur();
+  }
+  if (btnCopyText && !btnCopyHotkey.classList.contains('copied')) {
+    btnCopyText.textContent = 'Focus';
+  }
+  if (btnCopyHotkey) {
+    btnCopyHotkey.classList.remove('focused');
+    btnCopyHotkey.title = isMac
+      ? 'Focus GC editor for direct input (Shift+Cmd+X)'
+      : 'Focus GC editor for direct input (Ctrl+Alt+X)';
+  }
+  if (stageLabel) {
+    stageLabel.textContent = currentTargetName;
+    stageLabel.classList.remove('direct-gc');
+    stageLabel.title = `Tracking ${currentTargetName} (Press ${copyShortcutDesc} to type directly in GC)`;
+  }
+  ipcRenderer.send('direct-input-state', { targetId: currentTargetId, active: false });
 }
 
 /**
@@ -623,6 +650,10 @@ window.addEventListener('focus', () => {
     if (btnCopyText) btnCopyText.textContent = 'Focused';
     if (btnCopyHotkey) btnCopyHotkey.classList.add('focused');
   }
+});
+
+window.addEventListener('blur', () => {
+  unfocusDirectInput();
 });
 
 function setCheckingModeUI() {
@@ -961,6 +992,24 @@ ipcRenderer.on('window-closed', (event, data) => {
   clearDisplay();
 });
 
+ipcRenderer.on('unfocus-input-mode', (event, data) => {
+  if (data && data.targetId && data.targetId !== currentTargetId) return;
+  unfocusDirectInput();
+});
+
+ipcRenderer.on('window-blur', (event, data) => {
+  if (data && data.targetId && data.targetId !== currentTargetId) return;
+  unfocusDirectInput();
+});
+
+ipcRenderer.on('target-focused', (event, data) => {
+  if (data && data.targetId && data.targetId !== currentTargetId) return;
+  if (data && data.targetName) {
+    updateCurrentTargetName(data.targetName);
+  }
+  unfocusDirectInput();
+});
+
 ipcRenderer.on('typing-update', (event, data) => {
   if (data && data.targetId && data.targetId !== currentTargetId) return;
   if (data && data.targetName) {
@@ -968,9 +1017,14 @@ ipcRenderer.on('typing-update', (event, data) => {
   }
   const { text, length, words } = data;
 
-  // If user is actively typing directly inside GC editor, ignore external stream
-  if (document.activeElement === editorTextBox && isDirectInputActive) {
+  // If user is actively typing directly inside GC editor and GC window currently has focus, ignore external stream
+  if (document.hasFocus() && document.activeElement === editorTextBox && isDirectInputActive) {
     return;
+  }
+
+  // Otherwise, user is typing in external app (Alacritty / Notes); exit direct input mode
+  if (isDirectInputActive) {
+    unfocusDirectInput();
   }
 
   currentOriginalText = text || '';

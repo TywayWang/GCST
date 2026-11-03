@@ -235,6 +235,13 @@ function createTargetWindow(targetId, targetName) {
     if (!isAlwaysOnTopEnabled && win.isAlwaysOnTop()) {
       win.setAlwaysOnTop(false);
     }
+    const inst = targetInstances.get(targetId);
+    if (inst) {
+      inst.isDirectInputActive = false;
+    }
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('window-blur', { targetId });
+    }
   });
 
   win.loadFile('index.html', {
@@ -539,6 +546,13 @@ function handleHotkey() {
   // If in Review Mode (after Check hotkey was triggered), copy the corrected text
   if (targetInst.isHoveringWindowPopped && targetInst.isReviewMode) {
     copyCorrectedTextForTarget(targetInst);
+    return;
+  }
+
+  // If already in direct input and the window is focused, pressing the hotkey toggles back to external tracking mode
+  if (targetInst.isHoveringWindowPopped && targetInst.isDirectInputActive && targetInst.window && targetInst.window.isFocused()) {
+    targetInst.isDirectInputActive = false;
+    targetInst.window.webContents.send('unfocus-input-mode', { targetId: targetInst.targetId });
     return;
   }
 
@@ -1265,6 +1279,7 @@ app.whenReady().then(async () => {
       activeTargetId = target || 'terminal';
       const inst = getOrCreateTargetInstance(activeTargetId, targetName);
       inst.currentTypedText = text || '';
+      inst.isDirectInputActive = false;
 
       const isTextEditor = (activeTargetId === 'notes' || activeTargetId === 'textedit' || activeTargetId === 'notepad');
 
@@ -1335,6 +1350,10 @@ app.whenReady().then(async () => {
       }
 
       const inst = getOrCreateTargetInstance(activeTargetId, targetName);
+      inst.isDirectInputActive = false;
+      if (inst.window && !inst.window.isDestroyed()) {
+        inst.window.webContents.send('target-focused', { targetId: activeTargetId, targetName });
+      }
       if (inst.isHoveringWindowPopped) {
         bringTargetToTop(activeTargetId);
       }
