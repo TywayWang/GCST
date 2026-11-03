@@ -115,6 +115,12 @@ textarea,
   flex-shrink: 0;
 }
 
+.btn-close svg,
+.btn-close svg * {
+  pointer-events: none;
+  -webkit-app-region: no-drag;
+}
+
 .btn-close:hover {
   background: rgba(239, 68, 68, 0.18);
   color: #f87171;
@@ -783,6 +789,16 @@ textarea,
   color: #4ade80;
 }
 
+.btn-copy.focused {
+  background: rgba(95, 198, 211, 0.12);
+  border-color: rgba(95, 198, 211, 0.35);
+}
+
+.btn-copy.focused .btn-hotkey-name,
+.btn-copy.focused .hotkey-pill {
+  color: #5fc6d3;
+}
+
 /* Undo Action Button (Revert corrections to original input) */
 .btn-undo {
   color: var(--text-main);
@@ -916,8 +932,8 @@ textarea,
 .model-popover {
   position: absolute;
   bottom: 56px;
-  left: 125px;
-  right: auto;
+  right: 14px;
+  left: auto;
   width: 250px;
   max-height: 290px;
   background: #1c1c21;

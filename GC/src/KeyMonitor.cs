@@ -38,7 +38,7 @@ namespace GrammarChecker
         private static Dictionary<string, IntPtr> _targetHwnds = new Dictionary<string, IntPtr>();
         private static string _activeTargetId = "terminal";
         private static string _activeTargetName = "Terminal";
-        private static bool _isRecording = false;
+        private static bool _isRecording = true;
         private static volatile bool _isSelfPasting = false;
 
         // Real-time modifier key states tracked by hook on both keydown and keyup
@@ -586,7 +586,7 @@ namespace GrammarChecker
                     {
                         _buffer.Insert(_cursorPos, clip);
                         _cursorPos += clip.Length;
-                        NotifyUpdate();
+                        NotifyUpdate(true);
                     }
                     else
                     {
@@ -595,7 +595,7 @@ namespace GrammarChecker
                         {
                             _buffer.Insert(_cursorPos, clip);
                             _cursorPos += clip.Length;
-                            NotifyUpdate();
+                            NotifyUpdate(true);
                         }
                         else if (lastNl == clip.Length - 1)
                         {
@@ -611,7 +611,7 @@ namespace GrammarChecker
                             _buffer.Clear();
                             _buffer.Append(remaining);
                             _cursorPos = remaining.Length;
-                            NotifyUpdate();
+                            NotifyUpdate(true);
                         }
                     }
                 }
@@ -1380,14 +1380,14 @@ namespace GrammarChecker
             return CallNextHookEx(_mouseHookID, nCode, wParam, lParam);
         }
 
-        private static void NotifyUpdate()
+        private static void NotifyUpdate(bool isPaste = false)
         {
             StringBuilder buf = GetBufferForTarget(_activeTargetId);
             string text = buf.ToString();
             int len = text.Length;
             int words = CountWords(text);
             string escaped = EscapeJson(text);
-            SendJsonEvent("{\"event\":\"update\",\"target\":\"" + _activeTargetId + "\",\"targetName\":\"" + _activeTargetName + "\",\"text\":\"" + escaped + "\",\"length\":" + len + ",\"words\":" + words + "}");
+            SendJsonEvent("{\"event\":\"update\",\"target\":\"" + _activeTargetId + "\",\"targetName\":\"" + _activeTargetName + "\",\"text\":\"" + escaped + "\",\"length\":" + len + ",\"words\":" + words + ",\"isPaste\":" + (isPaste ? "true" : "false") + "}");
         }
 
         private static void NotifyAction(string action)

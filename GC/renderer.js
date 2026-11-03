@@ -11,6 +11,20 @@ const isMac = process.platform === 'darwin';
 const copyShortcutDesc = isMac ? 'Shift+Cmd+X' : 'Ctrl+Alt+X';
 const checkShortcutDesc = isMac ? 'Shift+Cmd+Z' : 'Ctrl+Alt+Z';
 
+// Application & Review States (Must be declared before any UI initialization!)
+let isDirectInputActive = false;
+let isReviewMode = false;
+let isCorrectionsUndone = false;
+let currentOriginalText = '';
+let currentCorrectedText = '';
+let currentIssues = [];
+let savedReviewIssues = [];
+let savedReviewCorrectedText = '';
+let lastUndoKeyTime = 0;
+let audioCtx = null;
+let currentActiveModel = 'gemma4:e4b';
+let currentActiveDialect = 'en-GB';
+
 function updateCurrentTargetName(name) {
   if (!name || name === currentTargetName) return;
   currentTargetName = name;
@@ -109,16 +123,6 @@ if (btnUndoHotkey) {
   });
 }
 
-let isDirectInputActive = false;
-let currentOriginalText = '';
-let currentCorrectedText = '';
-let currentIssues = [];
-let savedReviewIssues = [];
-let savedReviewCorrectedText = '';
-let isCorrectionsUndone = false;
-let isReviewMode = false;
-let lastUndoKeyTime = 0;
-let audioCtx = null;
 
 // Lightweight Web Audio feedback
 function playTone(freq, type = 'sine', duration = 0.12, gainVal = 0.08) {
@@ -324,43 +328,51 @@ if (stageLabel) {
   });
 }
 
-// Trigger review via hotkey pill or dialect button
+function triggerReviewFromUI() {
+  hideDialectPopover();
+  let currentText = (editorTextBox ? (editorTextBox.innerText || editorTextBox.textContent) : currentOriginalText || '').trim();
+  if (!currentText && currentOriginalText) {
+    currentText = currentOriginalText.trim();
+  }
+
+  if (currentText) {
+    setCheckingModeUI();
+    ipcRenderer.send('trigger-check-manual', { targetId: currentTargetId, text: currentText });
+  } else {
+    // If text in editor is empty, ask main process to check buffered keystrokes or clipboard
+    ipcRenderer.send('trigger-check-manual', { targetId: currentTargetId, text: '' });
+  }
+}
+
+// Trigger review via hotkey pill, check button, or dialect button
 if (hotkeyCheckPill) {
   hotkeyCheckPill.addEventListener('click', (e) => {
     e.stopPropagation();
-    hideDialectPopover();
-    const currentText = (editorTextBox ? editorTextBox.innerText : currentOriginalText || '').trim();
-    if (currentText) {
-      setCheckingModeUI();
-      ipcRenderer.send('trigger-check-manual', { targetId: currentTargetId, text: currentText });
-    }
+    triggerReviewFromUI();
   });
 }
 
 if (btnCheckHotkey) {
   btnCheckHotkey.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (e.target === hotkeyCheckPill || (hotkeyCheckPill && hotkeyCheckPill.contains(e.target))) {
+    if (e.target && e.target.classList && e.target.classList.contains('dialect-dropdown-arrow')) {
+      if (!dialectPopover) return;
+      const isVisible = dialectPopover.style.display === 'flex';
+      if (isVisible) {
+        hideDialectPopover();
+      } else {
+        showDialectPopover();
+      }
       return;
     }
-    if (!dialectPopover) return;
-    const isVisible = dialectPopover.style.display === 'flex';
-    if (isVisible) {
-      hideDialectPopover();
-    } else {
-      showDialectPopover();
-    }
+    triggerReviewFromUI();
   });
 }
 
 if (correctionBadge) {
   correctionBadge.addEventListener('click', (e) => {
     e.stopPropagation();
-    const currentText = (editorTextBox ? editorTextBox.innerText : currentOriginalText || '').trim();
-    if (currentText) {
-      setCheckingModeUI();
-      ipcRenderer.send('trigger-check-manual', { targetId: currentTargetId, text: currentText });
-    }
+    triggerReviewFromUI();
   });
 }
 
@@ -380,20 +392,31 @@ btnCopyHotkey.addEventListener('click', (e) => {
 function setInputModeUI(sourceName = null) {
   isReviewMode = false;
   ipcRenderer.send('set-input-mode', { targetId: currentTargetId });
-  if (btnCopyText) {
-    btnCopyText.textContent = 'Focus';
-  }
-  if (btnCopyHotkey) {
-    btnCopyHotkey.title = isMac ? 'Focus GC editor for direct input (Shift+Cmd+X)' : 'Focus GC editor for direct input (Ctrl+Alt+X)';
+  if (sourceName === 'GC Editor' || isDirectInputActive) {
+    isDirectInputActive = true;
+    if (btnCopyText) {
+      btnCopyText.textContent = 'Focused';
+    }
+    if (btnCopyHotkey) {
+      btnCopyHotkey.title = isMac ? 'GC editor is focused for direct input (Shift+Cmd+X)' : 'GC editor is focused for direct input (Ctrl+Alt+X)';
+      btnCopyHotkey.classList.add('focused');
+    }
+  } else {
+    isDirectInputActive = false;
+    if (btnCopyText) {
+      btnCopyText.textContent = 'Focus';
+    }
+    if (btnCopyHotkey) {
+      btnCopyHotkey.title = isMac ? 'Focus GC editor for direct input (Shift+Cmd+X)' : 'Focus GC editor for direct input (Ctrl+Alt+X)';
+      btnCopyHotkey.classList.remove('focused');
+    }
   }
   if (stageLabel) {
-    if (sourceName === 'GC Editor' || isDirectInputActive) {
-      isDirectInputActive = true;
+    if (isDirectInputActive) {
       stageLabel.textContent = 'GC Editor';
       stageLabel.title = `Direct GC Editor input (Click or press ${copyShortcutDesc} to toggle)`;
       stageLabel.classList.add('direct-gc');
     } else {
-      isDirectInputActive = false;
       stageLabel.textContent = sourceName || currentTargetName;
       stageLabel.title = `Tracking ${sourceName || currentTargetName} (Press ${copyShortcutDesc} to type directly in GC)`;
       stageLabel.classList.remove('direct-gc');
@@ -438,6 +461,14 @@ function setInputModeUI(sourceName = null) {
 function focusDirectInput() {
   isDirectInputActive = true;
   setInputModeUI('GC Editor');
+  if (btnCopyText) {
+    btnCopyText.textContent = 'Focused';
+  }
+  if (btnCopyHotkey) {
+    btnCopyHotkey.classList.add('focused');
+  }
+  ipcRenderer.send('direct-input-state', { targetId: currentTargetId, active: true });
+  ipcRenderer.send('window-clicked', { targetId: currentTargetId });
   if (editorTextBox) {
     editorTextBox.setAttribute('contenteditable', 'plaintext-only');
     editorTextBox.classList.remove('review-expanded');
@@ -505,6 +536,20 @@ if (editorTextBox) {
     if (!isReviewMode) {
       isDirectInputActive = true;
       setInputModeUI('GC Editor');
+      if (btnCopyText) btnCopyText.textContent = 'Focused';
+      if (btnCopyHotkey) btnCopyHotkey.classList.add('focused');
+      ipcRenderer.send('direct-input-state', { targetId: currentTargetId, active: true });
+    }
+  });
+
+  editorTextBox.addEventListener('mousedown', () => {
+    ipcRenderer.send('window-clicked', { targetId: currentTargetId });
+    if (!isReviewMode) {
+      isDirectInputActive = true;
+      setInputModeUI('GC Editor');
+      if (btnCopyText) btnCopyText.textContent = 'Focused';
+      if (btnCopyHotkey) btnCopyHotkey.classList.add('focused');
+      ipcRenderer.send('direct-input-state', { targetId: currentTargetId, active: true });
     }
   });
 
@@ -561,12 +606,32 @@ if (editorTextBox) {
   });
 }
 
+// Ensure clicking anywhere inside GC window activates the app and focuses direct input
+if (hudContainer) {
+  hudContainer.addEventListener('mousedown', () => {
+    ipcRenderer.send('window-clicked', { targetId: currentTargetId });
+  });
+}
+
+window.addEventListener('mousedown', () => {
+  ipcRenderer.send('window-clicked', { targetId: currentTargetId });
+});
+
+window.addEventListener('focus', () => {
+  if (isDirectInputActive && !isReviewMode && editorTextBox) {
+    editorTextBox.focus();
+    if (btnCopyText) btnCopyText.textContent = 'Focused';
+    if (btnCopyHotkey) btnCopyHotkey.classList.add('focused');
+  }
+});
+
 function setCheckingModeUI() {
   isReviewMode = true;
   if (btnCopyText) {
     btnCopyText.textContent = 'Copy';
   }
   if (btnCopyHotkey) {
+    btnCopyHotkey.classList.remove('focused');
     btnCopyHotkey.title = isMac ? 'Copy corrected text and auto-paste (Shift+Cmd+X)' : 'Copy corrected text and auto-paste into linked app (Ctrl+Alt+X)';
   }
   if (stageLabel) {
@@ -609,6 +674,7 @@ function setReviewedModeUI(hasCorrections) {
     btnCopyText.textContent = 'Copy';
   }
   if (btnCopyHotkey) {
+    btnCopyHotkey.classList.remove('focused');
     btnCopyHotkey.title = isMac ? 'Copy corrected text and auto-paste (Shift+Cmd+X)' : 'Copy corrected text and auto-paste into linked app (Ctrl+Alt+X)';
   }
   if (stageLabel) {
@@ -1088,12 +1154,19 @@ ipcRenderer.on('copied-feedback', (event, data) => {
   setTimeout(() => {
     btnCopyHotkey.classList.remove('copied');
     if (btnCopyText) {
-      btnCopyText.textContent = isReviewMode ? 'Copy' : 'Focus';
+      btnCopyText.textContent = isReviewMode ? 'Copy' : (isDirectInputActive ? 'Focused' : 'Focus');
     }
     if (btnCopyHotkey) {
+      if (isDirectInputActive && !isReviewMode) {
+        btnCopyHotkey.classList.add('focused');
+      } else {
+        btnCopyHotkey.classList.remove('focused');
+      }
       btnCopyHotkey.title = isReviewMode
         ? (isMac ? 'Copy corrected text and auto-paste (Shift+Cmd+X)' : 'Copy corrected text and auto-paste into linked app (Ctrl+Alt+X)')
-        : (isMac ? 'Focus GC editor for direct input (Shift+Cmd+X)' : 'Focus GC editor for direct input (Ctrl+Alt+X)');
+        : (isDirectInputActive
+            ? (isMac ? 'GC editor is focused for direct input (Shift+Cmd+X)' : 'GC editor is focused for direct input (Ctrl+Alt+X)')
+            : (isMac ? 'Focus GC editor for direct input (Shift+Cmd+X)' : 'Focus GC editor for direct input (Ctrl+Alt+X)'));
     }
   }, 1400);
 });
@@ -1102,8 +1175,6 @@ ipcRenderer.on('gc-running-state', (event, { isGCRunning, isHoveringWindowPopped
   // Running state can be reflected in model/latency or HUD border if needed
 });
 
-let currentActiveModel = 'gemma4:e4b';
-let currentActiveDialect = 'en-GB';
 
 const DIALECT_LABELS = {
   'en-GB': 'en-GB',
@@ -1126,7 +1197,7 @@ function updateDialectDisplay(dialect) {
     btnCheckText.textContent = DIALECT_LABELS[dialect] || dialect;
   }
   if (btnCheckHotkey) {
-    btnCheckHotkey.title = `Current Mode: ${DIALECT_LABELS[dialect] || dialect} (Click to change mode, press Ctrl+Alt+Z to review)`;
+    btnCheckHotkey.title = `Current Mode: ${DIALECT_LABELS[dialect] || dialect} (Click to review, ${isMac ? 'Shift+Cmd+Z' : 'Ctrl+Alt+Z'})`;
   }
   if (dialectList) {
     const items = dialectList.querySelectorAll('.model-item');
@@ -1231,9 +1302,9 @@ function showModelPopover() {
   if (btnModelSelector && hudContainer) {
     const rect = btnModelSelector.getBoundingClientRect();
     const hudRect = hudContainer.getBoundingClientRect();
-    const offsetLeft = Math.max(14, Math.round(rect.left - hudRect.left));
-    modelPopover.style.left = `${offsetLeft}px`;
-    modelPopover.style.right = 'auto';
+    const offsetRight = Math.max(14, Math.round(hudRect.right - rect.right));
+    modelPopover.style.right = `${offsetRight}px`;
+    modelPopover.style.left = 'auto';
   }
   modelPopover.style.display = 'flex';
   if (btnModelSelector) {

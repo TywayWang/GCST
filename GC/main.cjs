@@ -40,7 +40,7 @@ let activeTargetId = 'terminal';
 let tray = null;
 let keyMonitor = null;
 let ollamaClient = null;
-let isGCRunning = false; // Positive when active, negative when stopped
+let isGCRunning = true; // Positive when active, negative when stopped (starts active by default)
 let isAlwaysOnTopEnabled = false; // Defaults to false so GC never blocks other apps/software
 let configPath = '';
 
@@ -159,6 +159,7 @@ function createTargetWindow(targetId, targetName) {
     maxWidth: WINDOW_WIDTH,
     minHeight: WINDOW_HEIGHT,
     maxHeight: WINDOW_HEIGHT,
+    title: `GC // British English Editor - ${targetName}`,
     x: pos.x,
     y: pos.y,
     frame: false,
@@ -168,17 +169,14 @@ function createTargetWindow(targetId, targetName) {
     maximizable: false,
     fullscreenable: false,
     show: false, // Initially hidden until user begins typing in target
-    skipTaskbar: false,
+    skipTaskbar: true,
+    acceptFirstMouse: true, // macOS: allow clicking through directly to focus & interact when switching back from another app/desktop
     hasShadow: false,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
     }
   });
-
-  if (process.platform === 'darwin') {
-    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  }
 
   win.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return;
@@ -218,6 +216,9 @@ function createTargetWindow(targetId, targetName) {
 
   win.on('focus', () => {
     activeTargetId = targetId;
+    if (process.platform === 'darwin') {
+      app.focus({ steal: true });
+    }
     // When the user clicks directly inside GC's HUD to copy or interact, elevate it only if alwaysOnTop is explicitly enabled
     if (isAlwaysOnTopEnabled) {
       if (process.platform === 'darwin') {
@@ -355,6 +356,7 @@ function hideHoveringWindow(targetId) {
   if (!inst) return;
   inst.isHoveringWindowPopped = false;
   inst.isReviewMode = false;
+  inst.isDirectInputActive = false;
   inst.isCorrectionsUndone = false;
   inst.savedCorrectedText = '';
   inst.currentTypedText = '';
@@ -368,12 +370,8 @@ function hideHoveringWindow(targetId) {
   }
   if (inst.window && !inst.window.isDestroyed()) {
     inst.window.setAlwaysOnTop(false);
+    inst.window.hide();
     inst.window.webContents.send('window-closed', { targetId });
-    setTimeout(() => {
-      if (!inst.isHoveringWindowPopped && inst.window && !inst.window.isDestroyed()) {
-        inst.window.hide();
-      }
-    }, 200);
   }
   updateTray();
 }
@@ -392,6 +390,11 @@ function showAndFocusForDirectInput(targetId) {
   activeTargetId = targetId;
   inst.isHoveringWindowPopped = true;
   inst.isReviewMode = false;
+  inst.isDirectInputActive = true;
+
+  if (process.platform === 'darwin') {
+    app.focus({ steal: true });
+  }
 
   bringTargetToTop(targetId);
   inst.window.show();
@@ -631,25 +634,51 @@ function handleUndoHotkey(targetIdOverride = null) {
 // -------------------------------------------------------------
 function handleCheckHotkey(targetIdOverride = null) {
   if (!isGCRunning) {
-    console.log('[GC] Review hotkey pressed, but GC is not active.');
-    return;
+    isGCRunning = true;
+    if (keyMonitor) {
+      keyMonitor.startRecording();
+    }
+    updateTray();
+    broadcastToAllWindows('gc-running-state', { isGCRunning: true, isHoveringWindowPopped: false });
+    console.log('[GC] Started via check hotkey (isGCRunning = true).');
   }
 
-  const targetId = targetIdOverride || activeTargetId;
+  const targetId = targetIdOverride || activeTargetId || 'terminal';
   let inst = targetInstances.get(targetId);
-  if (!inst || !inst.currentTypedText.trim()) {
+  if (!inst) {
+    inst = getOrCreateTargetInstance(targetId);
+  }
+
+  // 1. Check if the target has typed text in its buffer
+  let textToCheck = (inst.currentTypedText || '').trim();
+
+  // 2. If current target buffer is empty, check any other popped window
+  if (!textToCheck) {
     for (const [tId, tInst] of targetInstances) {
-      if (tInst.isHoveringWindowPopped && tInst.currentTypedText.trim()) {
+      if (tInst.isHoveringWindowPopped && (tInst.currentTypedText || '').trim()) {
         inst = tInst;
+        textToCheck = inst.currentTypedText.trim();
         break;
       }
     }
   }
 
-  if (!inst) return;
-  const textToCheck = (inst.currentTypedText || '').trim();
+  // 3. Fallback: Check system clipboard
   if (!textToCheck) {
-    console.log(`[GC] Review hotkey pressed, but no typed text for target ${inst.targetId}.`);
+    try {
+      const clipText = clipboard.readText();
+      if (clipText && clipText.trim()) {
+        textToCheck = clipText.trim();
+        inst.currentTypedText = textToCheck;
+        console.log(`[GC] Using clipboard text fallback for target ${inst.targetId}:`, textToCheck.substring(0, 50));
+      }
+    } catch (e) {}
+  }
+
+  // 4. If still empty, open the window and focus the direct input editor
+  if (!textToCheck) {
+    console.log(`[GC] Review hotkey pressed with empty text for target ${inst.targetId}; opening direct input.`);
+    showAndFocusForDirectInput(inst.targetId);
     return;
   }
 
@@ -1161,6 +1190,11 @@ async function updateTray() {
 }
 
 app.whenReady().then(async () => {
+  // On macOS, run as background accessory / HUD without Dock presence
+  if (process.platform === 'darwin' && app.dock) {
+    app.dock.hide();
+  }
+
   configPath = path.join(app.getPath('userData'), 'gc-config.json');
   const cfg = loadConfig();
   isAlwaysOnTopEnabled = !!cfg.alwaysOnTop;
@@ -1221,13 +1255,24 @@ app.whenReady().then(async () => {
   try {
     keyMonitor = new KeyMonitorManager();
     keyMonitor.start();
+    if (isGCRunning) {
+      keyMonitor.startRecording();
+    }
 
-    keyMonitor.on('update', ({ target, targetName, text, length, words }) => {
+    keyMonitor.on('update', ({ target, targetName, text, length, words, isPaste }) => {
       if (!isGCRunning) return;
 
       activeTargetId = target || 'terminal';
       const inst = getOrCreateTargetInstance(activeTargetId, targetName);
       inst.currentTypedText = text || '';
+
+      const isTextEditor = (activeTargetId === 'notes' || activeTargetId === 'textedit' || activeTargetId === 'notepad');
+
+      // If user pasted in a text editor (e.g. Notes, Notepad), buffer the text for grammar review (Shift+Cmd+Z / Ctrl+Alt+Z)
+      // but do NOT auto-pop the HUD unless it was already opened by the user!
+      if (isPaste && isTextEditor && !inst.isHoveringWindowPopped) {
+        return;
+      }
 
       // Once the user has resumed typing in the window, bring GC's UI to the top!
       bringTargetToTop(activeTargetId);
@@ -1277,7 +1322,18 @@ app.whenReady().then(async () => {
     });
 
     keyMonitor.on('focus', ({ target, targetName }) => {
+      const prevTargetId = activeTargetId;
       activeTargetId = target || 'terminal';
+
+      // If switching from one target to another (e.g., from Notes to Terminal),
+      // hide the previous target's hovering window if it's not in active review mode!
+      if (prevTargetId && prevTargetId !== activeTargetId) {
+        const prevInst = targetInstances.get(prevTargetId);
+        if (prevInst && prevInst.isHoveringWindowPopped && !prevInst.isReviewMode) {
+          hideHoveringWindow(prevTargetId);
+        }
+      }
+
       const inst = getOrCreateTargetInstance(activeTargetId, targetName);
       if (inst.isHoveringWindowPopped) {
         bringTargetToTop(activeTargetId);
@@ -1285,8 +1341,16 @@ app.whenReady().then(async () => {
     });
 
     keyMonitor.on('blur', () => {
-      // User switched away to another application window to view or read: allow other windows to overlay GC's UI!
+      // User switched away to an untracked app (e.g. browser, desktop switch, etc.)
       lowerAllWindows();
+      for (const [tId, inst] of targetInstances) {
+        // If the user is actively typing directly in GC or is in review mode,
+        // preserve the window and text draft so they can continue typing upon returning
+        const isComposingInGC = inst.isDirectInputActive || (inst.currentTypedText && inst.currentTypedText.trim().length > 0);
+        if (inst.isHoveringWindowPopped && !inst.isReviewMode && !isComposingInGC) {
+          hideHoveringWindow(tId);
+        }
+      }
     });
 
     keyMonitor.on('error', (err) => {
@@ -1318,14 +1382,6 @@ app.whenReady().then(async () => {
     console.error(`Registration of ${hotkeyZ} failed!`);
   }
 
-  // Set macOS Dock Icon if available
-  if (process.platform === 'darwin' && app.dock) {
-    const dockIconPath = path.join(__dirname, 'assets', 'icon.png');
-    if (fs.existsSync(dockIconPath)) {
-      app.dock.setIcon(dockIconPath);
-    }
-  }
-
   // Setup IPC Handlers
   ipcMain.on('manual-hotkey-trigger', () => {
     handleHotkey();
@@ -1334,8 +1390,8 @@ app.whenReady().then(async () => {
   ipcMain.on('trigger-check-manual', (event, data) => {
     const targetId = (data && data.targetId) || findTargetBySender(event.sender)?.targetId;
     const inst = targetInstances.get(targetId);
-    if (inst && data && typeof data.text === 'string') {
-      inst.currentTypedText = data.text;
+    if (inst && data && typeof data.text === 'string' && data.text.trim().length > 0) {
+      inst.currentTypedText = data.text.trim();
     }
     handleCheckHotkey(targetId);
   });
@@ -1350,6 +1406,26 @@ app.whenReady().then(async () => {
       if (keyMonitor) {
         keyMonitor.clearBuffer(targetId);
       }
+    }
+  });
+
+  ipcMain.on('window-clicked', (event, data) => {
+    const targetId = (data && data.targetId) || findTargetBySender(event.sender)?.targetId;
+    const inst = targetInstances.get(targetId);
+    if (inst && inst.window && !inst.window.isDestroyed()) {
+      activeTargetId = targetId;
+      if (process.platform === 'darwin') {
+        app.focus({ steal: true });
+      }
+      inst.window.focus();
+    }
+  });
+
+  ipcMain.on('direct-input-state', (event, data) => {
+    const targetId = (data && data.targetId) || findTargetBySender(event.sender)?.targetId;
+    const inst = targetInstances.get(targetId);
+    if (inst && data) {
+      inst.isDirectInputActive = !!data.active;
     }
   });
 

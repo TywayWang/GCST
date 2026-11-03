@@ -12,7 +12,7 @@ static NSMutableDictionary<NSString*, NSNumber*> *_cursorPositions = nil;
 static NSString *_activeTargetId = @"terminal";
 static NSString *_activeTargetName = @"Terminal";
 static BOOL _activeIsTextEditor = NO;
-static BOOL _isRecording = NO;
+static BOOL _isRecording = YES;
 static pthread_mutex_t _lock = PTHREAD_MUTEX_INITIALIZER;
 
 // App target caching
@@ -90,15 +90,19 @@ static void setCursorPosForTarget(NSString *targetId, NSInteger pos) {
     _cursorPositions[targetId] = @(pos);
 }
 
-static void notifyUpdate(NSString *targetId, NSString *targetName) {
+static void notifyUpdateWithPaste(NSString *targetId, NSString *targetName, BOOL isPaste) {
     NSMutableString *buf = getBufferForTarget(targetId);
     NSString *text = [buf copy];
     NSInteger len = [text length];
     NSInteger words = countWords(text);
     NSString *escaped = escapeJson(text);
-    printf("{\"event\":\"update\",\"target\":\"%s\",\"targetName\":\"%s\",\"text\":\"%s\",\"length\":%ld,\"words\":%ld}\n",
-           [targetId UTF8String], [targetName UTF8String], [escaped UTF8String], (long)len, (long)words);
+    printf("{\"event\":\"update\",\"target\":\"%s\",\"targetName\":\"%s\",\"text\":\"%s\",\"length\":%ld,\"words\":%ld,\"isPaste\":%s}\n",
+           [targetId UTF8String], [targetName UTF8String], [escaped UTF8String], (long)len, (long)words, isPaste ? "true" : "false");
     fflush(stdout);
+}
+
+static void notifyUpdate(NSString *targetId, NSString *targetName) {
+    notifyUpdateWithPaste(targetId, targetName, NO);
 }
 
 static void notifyAction(NSString *targetId, NSString *targetName, NSString *action) {
@@ -204,13 +208,13 @@ static void applyPasteForTarget(NSString *targetId, NSString *targetName, BOOL i
         if (isTextEditor) {
             [buf insertString:clip atIndex:curPos];
             setCursorPosForTarget(targetId, curPos + [clip length]);
-            notifyUpdate(targetId, targetName);
+            notifyUpdateWithPaste(targetId, targetName, YES);
         } else {
             NSRange lastNlRange = [clip rangeOfString:@"\n" options:NSBackwardsSearch];
             if (lastNlRange.location == NSNotFound) {
                 [buf insertString:clip atIndex:curPos];
                 setCursorPosForTarget(targetId, curPos + [clip length]);
-                notifyUpdate(targetId, targetName);
+                notifyUpdateWithPaste(targetId, targetName, YES);
             } else if (lastNlRange.location == [clip length] - 1) {
                 // Trailing newline submitted the command
                 [buf setString:@""];
@@ -221,7 +225,7 @@ static void applyPasteForTarget(NSString *targetId, NSString *targetName, BOOL i
                 NSString *remaining = [clip substringFromIndex:lastNlRange.location + 1];
                 [buf setString:remaining];
                 setCursorPosForTarget(targetId, [remaining length]);
-                notifyUpdate(targetId, targetName);
+                notifyUpdateWithPaste(targetId, targetName, YES);
             }
         }
         pthread_mutex_unlock(&_lock);
@@ -230,14 +234,14 @@ static void applyPasteForTarget(NSString *targetId, NSString *targetName, BOOL i
 
 static BOOL isGCApp(NSRunningApplication *app) {
     if (!app) return NO;
+    pid_t pid = [app processIdentifier];
+    if (pid == getppid()) {
+        return YES;
+    }
     NSString *bundleId = [app bundleIdentifier] ?: @"";
     NSString *appName = [app localizedName] ?: @"";
     if ([bundleId isEqualToString:@"gc-british-grammar-checker"] ||
         [bundleId rangeOfString:@"gc-british" options:NSCaseInsensitiveSearch].location != NSNotFound) {
-        return YES;
-    }
-    if ([bundleId isEqualToString:@"com.github.Electron"] ||
-        [appName caseInsensitiveCompare:@"Electron"] == NSOrderedSame) {
         return YES;
     }
     if ([appName caseInsensitiveCompare:@"GC"] == NSOrderedSame ||
@@ -262,7 +266,7 @@ static BOOL classifyForegroundTarget(NSRunningApplication *app, NSString **outTa
     NSString *bundleId = [app bundleIdentifier] ?: @"";
     NSString *appName = [app localizedName] ?: @"";
 
-    // 2. Apple Notes
+    // 1. Apple Notes
     if ([bundleId isEqualToString:@"com.apple.Notes"] ||
         [bundleId rangeOfString:@"apple.Notes" options:NSCaseInsensitiveSearch].location != NSNotFound ||
         [appName caseInsensitiveCompare:@"Notes"] == NSOrderedSame ||
@@ -273,7 +277,7 @@ static BOOL classifyForegroundTarget(NSRunningApplication *app, NSString **outTa
         return YES;
     }
 
-    // 3. Apple TextEdit
+    // 2. Apple TextEdit
     if ([bundleId isEqualToString:@"com.apple.TextEdit"] ||
         [bundleId rangeOfString:@"apple.TextEdit" options:NSCaseInsensitiveSearch].location != NSNotFound ||
         [appName caseInsensitiveCompare:@"TextEdit"] == NSOrderedSame ||
@@ -284,7 +288,7 @@ static BOOL classifyForegroundTarget(NSRunningApplication *app, NSString **outTa
         return YES;
     }
 
-    // 4. CyberTerminal (Desktop app or Electron)
+    // 3. CyberTerminal (Desktop app, standalone binary, or Electron)
     if ([bundleId rangeOfString:@"cyberterminal" options:NSCaseInsensitiveSearch].location != NSNotFound ||
         [appName rangeOfString:@"CyberTerminal" options:NSCaseInsensitiveSearch].location != NSNotFound) {
         if (outTargetId) *outTargetId = @"terminal";
@@ -293,7 +297,7 @@ static BOOL classifyForegroundTarget(NSRunningApplication *app, NSString **outTa
         return YES;
     }
 
-    // 5. Terminal Apps: Apple Terminal, iTerm2, Warp, Alacritty, Kitty, WezTerm, Ghostty, etc.
+    // 4. Terminal Apps: Apple Terminal, iTerm2, Warp, Alacritty, Kitty, WezTerm, Ghostty, etc.
     BOOL isTerm = NO;
     NSString *canonicalName = @"Terminal";
 
@@ -334,18 +338,7 @@ static BOOL classifyForegroundTarget(NSRunningApplication *app, NSString **outTa
         return YES;
     }
 
-    // 6. Explicitly reject code editors, browsers, IDEs, chats from loose title checks
-    if ([bundleId rangeOfString:@"com.microsoft.VSCode" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-        [bundleId rangeOfString:@"com.apple.dt.Xcode" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-        [bundleId rangeOfString:@"google.Chrome" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-        [bundleId rangeOfString:@"apple.Safari" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-        [appName rangeOfString:@"Code" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-        [appName rangeOfString:@"Slack" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-        [appName rangeOfString:@"Discord" options:NSCaseInsensitiveSearch].location != NSNotFound) {
-        return NO;
-    }
-
-    // 7. Check AX Window Title for terminals or shells
+    // 5. Check AX Window Title for CyberTerminal or other terminal shells
     @try {
         AXUIElementRef appRef = AXUIElementCreateApplication([app processIdentifier]);
         if (appRef) {
@@ -356,17 +349,31 @@ static BOOL classifyForegroundTarget(NSRunningApplication *app, NSString **outTa
                 err = AXUIElementCopyAttributeValue(focusedWindow, kAXTitleAttribute, &titleRef);
                 if (err == kAXErrorSuccess && titleRef) {
                     NSString *title = (__bridge NSString*)titleRef;
-                    if ([title rangeOfString:@"Terminal" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-                        [title rangeOfString:@"CyberTerminal" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-                        [title rangeOfString:@"zsh" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-                        [title rangeOfString:@"bash" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                    if ([title rangeOfString:@"CyberTerminal" options:NSCaseInsensitiveSearch].location != NSNotFound) {
                         CFRelease(titleRef);
                         CFRelease(focusedWindow);
                         CFRelease(appRef);
                         if (outTargetId) *outTargetId = @"terminal";
-                        if (outTargetName) *outTargetName = @"Terminal";
+                        if (outTargetName) *outTargetName = @"CyberTerminal";
                         if (outIsTextEditor) *outIsTextEditor = NO;
                         return YES;
+                    }
+                    if ([title rangeOfString:@"Terminal" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                        [title rangeOfString:@"zsh" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                        [title rangeOfString:@"bash" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                        // Avoid matching VSCode / browser tabs named Terminal unless it's a genuine terminal app
+                        BOOL isIDEOrBrowser = ([bundleId rangeOfString:@"VSCode" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                                               [bundleId rangeOfString:@"Chrome" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                                               [bundleId rangeOfString:@"Safari" options:NSCaseInsensitiveSearch].location != NSNotFound);
+                        if (!isIDEOrBrowser) {
+                            CFRelease(titleRef);
+                            CFRelease(focusedWindow);
+                            CFRelease(appRef);
+                            if (outTargetId) *outTargetId = @"terminal";
+                            if (outTargetName) *outTargetName = @"Terminal";
+                            if (outIsTextEditor) *outIsTextEditor = NO;
+                            return YES;
+                        }
                     }
                     CFRelease(titleRef);
                 }
@@ -873,8 +880,7 @@ int main(int argc, const char * argv[]) {
                 pthread_mutex_unlock(&_lock);
                 notifyFocus(tId, tName);
             } else {
-                NSString *appName = [app localizedName] ?: @"";
-                if ([appName rangeOfString:@"GC" options:NSCaseInsensitiveSearch].location == NSNotFound) {
+                if (!isGCApp(app)) {
                     printf("{\"event\":\"blur\"}\n");
                     fflush(stdout);
                 }

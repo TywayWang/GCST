@@ -86,7 +86,8 @@ class KeyMonitorManager extends EventEmitter {
         targetName: data.targetName || 'Terminal',
         text: data.text || '',
         length: data.length,
-        words: data.words
+        words: data.words,
+        isPaste: !!data.isPaste
       });
     } else if (data.event === 'stopped') {
       this.isRecording = false;
