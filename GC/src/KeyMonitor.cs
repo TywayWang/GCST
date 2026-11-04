@@ -40,6 +40,7 @@ namespace GrammarChecker
         private static string _activeTargetName = "Terminal";
         private static bool _isRecording = true;
         private static volatile bool _isSelfPasting = false;
+        private static volatile bool _isSelfInjecting = false;
 
         // Real-time modifier key states tracked by hook on both keydown and keyup
         private static volatile bool _winPressed = false;
@@ -312,6 +313,18 @@ namespace GrammarChecker
         private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
         [DllImport("user32.dll")]
         private static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        private static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+        [DllImport("kernel32.dll")]
+        private static extern uint GetCurrentThreadId();
+
+        [DllImport("user32.dll")]
+        private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SetFocus(IntPtr hWnd);
 
         private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
         private delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
@@ -915,10 +928,12 @@ namespace GrammarChecker
                     _targetHwnds[targetId] = hwnd;
                 }
                 _wasLastForegroundTarget = true;
+                if (_isSelfPasting) return;
                 NotifyFocus(targetId, targetName);
             }
             else
             {
+                if (_isSelfPasting) return;
                 if (_wasLastForegroundTarget)
                 {
                     _wasLastForegroundTarget = false;
@@ -942,7 +957,7 @@ namespace GrammarChecker
                 return CallNextHookEx(_hookID, nCode, wParam, lParam);
             }
 
-            if (_isSelfPasting)
+            if (_isSelfPasting || _isSelfInjecting)
             {
                 return CallNextHookEx(_hookID, nCode, wParam, lParam);
             }
@@ -1052,14 +1067,15 @@ namespace GrammarChecker
                     lock (_lock)
                     {
                         _targetHwnds[targetId] = _cachedHwnd;
+                        _isForegroundNotepad = isEditor;
                         if (_activeTargetId != targetId)
                         {
                             _activeTargetId = targetId;
                             _activeTargetName = targetName;
-                            _isForegroundNotepad = isEditor;
                             NotifyFocus(targetId, targetName);
                         }
                         _wasLastForegroundTarget = true;
+                        bool isNotes = isEditor || string.Equals(targetId, "notes", StringComparison.OrdinalIgnoreCase);
 
                         if (_cursorPos < 0) _cursorPos = 0;
                         if (_cursorPos > _buffer.Length) _cursorPos = _buffer.Length;
@@ -1079,12 +1095,21 @@ namespace GrammarChecker
                             {
                                 ApplyPaste();
                             }
-                            // Ctrl + Enter: Execute / submit prompt
+                            // Ctrl + Enter: In Terminal, submit prompt. In Notes, insert newline
                             else if (key == Keys.Enter)
                             {
-                                _buffer.Clear();
-                                _cursorPos = 0;
-                                NotifyAction("enter");
+                                if (isNotes)
+                                {
+                                    _buffer.Insert(_cursorPos, "\n");
+                                    _cursorPos++;
+                                    NotifyUpdate();
+                                }
+                                else
+                                {
+                                    _buffer.Clear();
+                                    _cursorPos = 0;
+                                    NotifyAction("enter");
+                                }
                             }
                             // Ctrl + U: Unix Line Kill (delete all text from cursor back to start of line)
                             else if (key == Keys.U)
@@ -1116,6 +1141,24 @@ namespace GrammarChecker
                             else if (key == Keys.W || key == Keys.Back)
                             {
                                 DeleteWordBackward();
+                                if (key == Keys.Back && !isNotes)
+                                {
+                                    // In Terminal / agy CLI / PowerShell, native Ctrl+Backspace sends \x08 or \x7f
+                                    // which only deletes a single character in agy CLI (Bubble Tea).
+                                    // Synthesize Ctrl + W (\x17) so agy CLI and shells delete word-by-word.
+                                    _isSelfInjecting = true;
+                                    try
+                                    {
+                                        const int KEYEVENTF_KEYUP = 0x0002;
+                                        keybd_event((byte)Keys.W, 0, 0, UIntPtr.Zero);
+                                        keybd_event((byte)Keys.W, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                                    }
+                                    finally
+                                    {
+                                        _isSelfInjecting = false;
+                                    }
+                                    return (IntPtr)1; // Suppress original Ctrl+Backspace
+                                }
                             }
                             // Ctrl + Delete: Delete following word
                             else if (key == Keys.Delete)
@@ -1165,11 +1208,59 @@ namespace GrammarChecker
                             if (key == Keys.Back || key == Keys.W)
                             {
                                 DeleteWordBackward();
+                                if (key == Keys.Back)
+                                {
+                                    _isSelfInjecting = true;
+                                    try
+                                    {
+                                        const int KEYEVENTF_KEYUP = 0x0002;
+                                        keybd_event((byte)Keys.Menu, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                                        keybd_event((byte)Keys.ControlKey, 0, 0, UIntPtr.Zero);
+                                        if (isNotes)
+                                        {
+                                            // In Notepad: Ctrl + Backspace is native word deletion
+                                            keybd_event((byte)Keys.Back, 0, 0, UIntPtr.Zero);
+                                            keybd_event((byte)Keys.Back, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                                        }
+                                        else
+                                        {
+                                            // In Terminal / agy CLI / PowerShell: Ctrl + W is word deletion
+                                            keybd_event((byte)Keys.W, 0, 0, UIntPtr.Zero);
+                                            keybd_event((byte)Keys.W, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                                        }
+                                        keybd_event((byte)Keys.ControlKey, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                                        keybd_event((byte)Keys.Menu, 0, 0, UIntPtr.Zero);
+                                    }
+                                    finally
+                                    {
+                                        _isSelfInjecting = false;
+                                    }
+                                    return (IntPtr)1; // Suppress original Alt+Backspace WM_SYSKEYDOWN
+                                }
                             }
                             // Alt + Delete or Alt + D: Delete following word (word-by-word forward deletion)
                             else if (key == Keys.Delete || key == Keys.D)
                             {
                                 DeleteWordForward();
+                                if (key == Keys.Delete)
+                                {
+                                    _isSelfInjecting = true;
+                                    try
+                                    {
+                                        const int KEYEVENTF_KEYUP = 0x0002;
+                                        keybd_event((byte)Keys.Menu, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                                        keybd_event((byte)Keys.ControlKey, 0, 0, UIntPtr.Zero);
+                                        keybd_event((byte)Keys.Delete, 0, 0, UIntPtr.Zero);
+                                        keybd_event((byte)Keys.Delete, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                                        keybd_event((byte)Keys.ControlKey, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                                        keybd_event((byte)Keys.Menu, 0, 0, UIntPtr.Zero);
+                                    }
+                                    finally
+                                    {
+                                        _isSelfInjecting = false;
+                                    }
+                                    return (IntPtr)1; // Suppress original Alt+Delete WM_SYSKEYDOWN
+                                }
                             }
                             // Alt + Left or Alt + B: Move backward one word
                             else if (key == Keys.Left || key == Keys.B)
@@ -1284,7 +1375,7 @@ namespace GrammarChecker
                             }
                             else if (key == Keys.Enter)
                             {
-                                if (isShift || _isForegroundNotepad)
+                                if (isShift || isNotes)
                                 {
                                     _buffer.Insert(_cursorPos, "\n");
                                     _cursorPos++;
@@ -1445,8 +1536,6 @@ namespace GrammarChecker
         private static void ForceForegroundWindow(IntPtr hWnd)
         {
             if (hWnd == IntPtr.Zero || !IsWindow(hWnd)) return;
-            IntPtr foreWnd = GetForegroundWindow();
-            if (foreWnd == hWnd) return;
 
             if (IsIconic(hWnd))
             {
@@ -1457,11 +1546,44 @@ namespace GrammarChecker
                 ShowWindow(hWnd, 5); // SW_SHOW only if currently hidden
             }
 
-            BringWindowToTop(hWnd);
-            SetForegroundWindow(hWnd);
-            if (GetForegroundWindow() != hWnd)
+            IntPtr foreWnd = GetForegroundWindow();
+            if (foreWnd == hWnd)
             {
-                SwitchToThisWindow(hWnd, true);
+                BringWindowToTop(hWnd);
+                return;
+            }
+
+            uint forePid, targetPid;
+            uint foreThread = foreWnd != IntPtr.Zero ? GetWindowThreadProcessId(foreWnd, out forePid) : 0;
+            uint targetThread = GetWindowThreadProcessId(hWnd, out targetPid);
+            uint curThread = GetCurrentThreadId();
+            bool attachedFore = false;
+            bool attachedTarget = false;
+
+            try
+            {
+                if (foreThread != 0 && foreThread != curThread)
+                {
+                    attachedFore = AttachThreadInput(curThread, foreThread, true);
+                }
+                if (targetThread != 0 && targetThread != curThread && targetThread != foreThread)
+                {
+                    attachedTarget = AttachThreadInput(curThread, targetThread, true);
+                }
+
+                BringWindowToTop(hWnd);
+                SetForegroundWindow(hWnd);
+                if (GetForegroundWindow() != hWnd)
+                {
+                    SwitchToThisWindow(hWnd, true);
+                }
+                SetFocus(hWnd);
+            }
+            catch { }
+            finally
+            {
+                if (attachedTarget) AttachThreadInput(curThread, targetThread, false);
+                if (attachedFore) AttachThreadInput(curThread, foreThread, false);
             }
         }
 
@@ -1553,8 +1675,9 @@ namespace GrammarChecker
                     const byte VK_MENU = 0x12; // Alt key
                     const byte VK_V = 0x56;
                     const byte VK_X = 0x58;
+                    const byte VK_Z = 0x5A;
 
-                    // Step A: Wait up to 2000ms for user to physically release Ctrl, Alt, Shift, and X
+                    // Step A: Wait up to 2000ms for user to physically release Ctrl, Alt, Shift, X, and Z
                     // before switching focus or sending Ctrl+V. Never synthesize fake Alt/X/Shift key-ups,
                     // which can trigger third-party window-hider hooks on the active window.
                     int waited = 0;
@@ -1564,16 +1687,60 @@ namespace GrammarChecker
                         bool ctrlPressed = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
                         bool shiftPressed = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
                         bool xPressed = (GetAsyncKeyState(VK_X) & 0x8000) != 0;
-                        if (!altPressed && !ctrlPressed && !shiftPressed && !xPressed) break;
+                        bool zPressed = (GetAsyncKeyState(VK_Z) & 0x8000) != 0;
+                        if (!altPressed && !ctrlPressed && !shiftPressed && !xPressed && !zPressed) break;
                         System.Threading.Thread.Sleep(15);
                         waited += 15;
                     }
 
                     // Step B: Activate the linked target window cleanly
+                    ForceForegroundWindow(targetHwnd);
+                    System.Threading.Thread.Sleep(80);
                     if (GetForegroundWindow() != targetHwnd)
                     {
                         ForceForegroundWindow(targetHwnd);
-                        System.Threading.Thread.Sleep(60);
+                        System.Threading.Thread.Sleep(40);
+                    }
+
+                    // Step B2: For Windows 11 Tabbed Notepad ("notes"), ensure the active RichEditD2DPT / Edit child control has keyboard focus
+                    if (targetId == "notes")
+                    {
+                        IntPtr editChild = IntPtr.Zero;
+                        EnumChildWindows(targetHwnd, (child, lParam) =>
+                        {
+                            if (!IsWindowVisible(child)) return true;
+                            StringBuilder cls = new StringBuilder(128);
+                            GetClassName(child, cls, cls.Capacity);
+                            string cName = cls.ToString();
+                            if (cName == "RichEditD2DPT" || cName == "Edit")
+                            {
+                                editChild = child;
+                                return false;
+                            }
+                            return true;
+                        }, IntPtr.Zero);
+
+                        if (editChild != IntPtr.Zero)
+                        {
+                            uint childPid;
+                            uint childThread = GetWindowThreadProcessId(editChild, out childPid);
+                            uint curThread = GetCurrentThreadId();
+                            bool attachedChild = false;
+                            try
+                            {
+                                if (childThread != 0 && childThread != curThread)
+                                {
+                                    attachedChild = AttachThreadInput(curThread, childThread, true);
+                                }
+                                SetFocus(editChild);
+                            }
+                            catch { }
+                            finally
+                            {
+                                if (attachedChild) AttachThreadInput(curThread, childThread, false);
+                            }
+                            System.Threading.Thread.Sleep(25);
+                        }
                     }
 
                     // Step C: Send clean Ctrl + V (paste without submit/Enter)
@@ -1586,7 +1753,7 @@ namespace GrammarChecker
                     keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
 
                     // Step D: Safety check - if any external hook hid the target window, restore its visibility immediately
-                    System.Threading.Thread.Sleep(50);
+                    System.Threading.Thread.Sleep(60);
                     if (IsWindow(targetHwnd) && !IsWindowVisible(targetHwnd))
                     {
                         ShowWindow(targetHwnd, 5);
@@ -1598,8 +1765,8 @@ namespace GrammarChecker
                 }
                 finally
                 {
-                    // Delay slightly before releasing _isSelfPasting so queued hook events are bypassed
-                    System.Threading.Thread.Sleep(60);
+                    // Delay slightly before releasing _isSelfPasting so queued hook/foreground events are bypassed
+                    System.Threading.Thread.Sleep(120);
                     _isSelfPasting = false;
                 }
             }

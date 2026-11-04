@@ -182,54 +182,9 @@ static void moveWordForward(NSString *targetId) {
 }
 
 static void applyPasteForTarget(NSString *targetId, NSString *targetName, BOOL isTextEditor) {
-    @autoreleasepool {
-        NSPasteboard *pb = [NSPasteboard generalPasteboard];
-        NSString *clip = [pb stringForType:NSPasteboardTypeString];
-        if (!clip || [clip length] == 0) return;
-
-        if ([clip length] > 20000) {
-            clip = [clip substringFromIndex:[clip length] - 20000];
-        }
-
-        clip = [clip stringByReplacingOccurrencesOfString:@"\r\n" withString:@"\n"];
-        clip = [clip stringByReplacingOccurrencesOfString:@"\r" withString:@"\n"];
-
-        // If single line with trailing newline, strip it so prompt is not prematurely submitted
-        if (![clip containsString:@"\n"] || ([clip hasSuffix:@"\n"] && [[clip componentsSeparatedByString:@"\n"] count] == 2)) {
-            clip = [clip stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"\n"]];
-        }
-
-        pthread_mutex_lock(&_lock);
-        NSMutableString *buf = getBufferForTarget(targetId);
-        NSInteger curPos = getCursorPosForTarget(targetId);
-        if (curPos < 0) curPos = 0;
-        if (curPos > (NSInteger)[buf length]) curPos = [buf length];
-
-        if (isTextEditor) {
-            [buf insertString:clip atIndex:curPos];
-            setCursorPosForTarget(targetId, curPos + [clip length]);
-            notifyUpdateWithPaste(targetId, targetName, YES);
-        } else {
-            NSRange lastNlRange = [clip rangeOfString:@"\n" options:NSBackwardsSearch];
-            if (lastNlRange.location == NSNotFound) {
-                [buf insertString:clip atIndex:curPos];
-                setCursorPosForTarget(targetId, curPos + [clip length]);
-                notifyUpdateWithPaste(targetId, targetName, YES);
-            } else if (lastNlRange.location == [clip length] - 1) {
-                // Trailing newline submitted the command
-                [buf setString:@""];
-                setCursorPosForTarget(targetId, 0);
-                notifyAction(targetId, targetName, @"enter");
-            } else {
-                // Multiline paste into terminal: text after last newline remains in prompt
-                NSString *remaining = [clip substringFromIndex:lastNlRange.location + 1];
-                [buf setString:remaining];
-                setCursorPosForTarget(targetId, [remaining length]);
-                notifyUpdateWithPaste(targetId, targetName, YES);
-            }
-        }
-        pthread_mutex_unlock(&_lock);
-    }
+    // External paste interception is disabled:
+    // Content should only be inputted/pasted when user is actively working inside GC's UI with the Focused button activated.
+    return;
 }
 
 static BOOL isGCApp(NSRunningApplication *app) {

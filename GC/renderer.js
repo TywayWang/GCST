@@ -254,7 +254,7 @@ window.addEventListener('keydown', (e) => {
       // User is typing inside GC Editor: allow normal newline
       return;
     }
-    if (currentTargetId !== 'notes' && currentTargetId !== 'textedit') {
+    if (currentTargetId !== 'notes' && currentTargetId !== 'notepad' && currentTargetId !== 'textedit') {
       ipcRenderer.send('close-hovering-window', { targetId: currentTargetId });
     }
   }
@@ -477,10 +477,13 @@ function focusDirectInput() {
     editorTextBox.setAttribute('contenteditable', 'plaintext-only');
     editorTextBox.classList.remove('review-expanded');
     const text = (editorTextBox.innerText || '').trim();
-    if (!text) {
+    if (!text && !currentOriginalText) {
       editorTextBox.textContent = '';
       editorTextBox.setAttribute('data-empty', 'true');
     } else {
+      if (!text && currentOriginalText) {
+        editorTextBox.textContent = currentOriginalText;
+      }
       editorTextBox.setAttribute('data-empty', 'false');
     }
     editorTextBox.focus();
@@ -557,6 +560,42 @@ function handleEditorDeletionHotkey(direction) {
   }
 }
 
+/**
+ * Handle word-by-word deletion in GC Editor:
+ * - direction 'backward': Alt+Backspace (Win11) / Cmd+Backspace (macOS) / Ctrl+Backspace (Win11)
+ * - direction 'forward':  Alt+Delete / Ctrl+Delete / Cmd+Delete
+ */
+function handleEditorWordDeletion(direction = 'backward') {
+  if (!editorTextBox || isReviewMode) return;
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+
+  try {
+    if (sel.isCollapsed) {
+      if (direction === 'backward') {
+        sel.modify('extend', 'backward', 'word');
+        if (sel.toString().trim() === '') {
+          sel.modify('extend', 'backward', 'word');
+        }
+      } else {
+        sel.modify('extend', 'forward', 'word');
+        if (sel.toString().trim() === '') {
+          sel.modify('extend', 'forward', 'word');
+        }
+      }
+    }
+    document.execCommand('delete');
+
+    // Ensure state and IPC sync if execCommand did not trigger input event
+    const text = (editorTextBox.innerText || '').replace(/\r\n/g, '\n');
+    if (text !== currentOriginalText) {
+      editorTextBox.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  } catch (err) {
+    console.error('Failed to execute editor word deletion:', err);
+  }
+}
+
 // Direct typing & editing inside editorTextBox
 if (editorTextBox) {
   editorTextBox.addEventListener('focus', () => {
@@ -599,6 +638,33 @@ if (editorTextBox) {
       e.preventDefault();
       e.stopPropagation();
       handleEditorDeletionHotkey('right');
+      return;
+    }
+
+    // Hotkey: Alt+Backspace (Win11) / Option+Backspace or Cmd+Backspace (macOS) / Ctrl+Backspace (Win11)
+    // Performs word-by-word backward deletion
+    const isBackspace = (e.key === 'Backspace' || e.code === 'Backspace');
+    const isAltBackspace = e.altKey && !e.ctrlKey && !e.metaKey && isBackspace;
+    const isCmdBackspace = e.metaKey && !e.ctrlKey && !e.altKey && isBackspace;
+    const isCtrlBackspace = e.ctrlKey && !e.altKey && !e.metaKey && isBackspace;
+
+    if (isAltBackspace || isCmdBackspace || isCtrlBackspace) {
+      e.preventDefault();
+      e.stopPropagation();
+      handleEditorWordDeletion('backward');
+      return;
+    }
+
+    // Hotkey: Alt+Delete / Ctrl+Delete / Cmd+Delete -> word-by-word forward deletion
+    const isDelete = (e.key === 'Delete' || e.code === 'Delete');
+    const isAltDelete = e.altKey && !e.ctrlKey && !e.metaKey && isDelete;
+    const isCmdDelete = e.metaKey && !e.ctrlKey && !e.altKey && isDelete;
+    const isCtrlDelete = e.ctrlKey && !e.altKey && !e.metaKey && isDelete;
+
+    if (isAltDelete || isCmdDelete || isCtrlDelete) {
+      e.preventDefault();
+      e.stopPropagation();
+      handleEditorWordDeletion('forward');
       return;
     }
   });
@@ -653,7 +719,7 @@ window.addEventListener('focus', () => {
 });
 
 window.addEventListener('blur', () => {
-  unfocusDirectInput();
+  // Preserve direct input state and glowing button across app blur/blocking
 });
 
 function setCheckingModeUI() {
@@ -999,7 +1065,7 @@ ipcRenderer.on('unfocus-input-mode', (event, data) => {
 
 ipcRenderer.on('window-blur', (event, data) => {
   if (data && data.targetId && data.targetId !== currentTargetId) return;
-  unfocusDirectInput();
+  // Preserve direct input state across app blur/blocking
 });
 
 ipcRenderer.on('target-focused', (event, data) => {
@@ -1007,7 +1073,6 @@ ipcRenderer.on('target-focused', (event, data) => {
   if (data && data.targetName) {
     updateCurrentTargetName(data.targetName);
   }
-  unfocusDirectInput();
 });
 
 ipcRenderer.on('typing-update', (event, data) => {
@@ -1017,14 +1082,15 @@ ipcRenderer.on('typing-update', (event, data) => {
   }
   const { text, length, words } = data;
 
-  // If user is actively typing directly inside GC editor and GC window currently has focus, ignore external stream
-  if (document.hasFocus() && document.activeElement === editorTextBox && isDirectInputActive) {
+  // CRITICAL FIX: Only when the Focused button is activated (user is working inside GC's UI)
+  // can content be inputted or displayed in GC's UI!
+  if (!isDirectInputActive) {
     return;
   }
 
-  // Otherwise, user is typing in external app (Alacritty / Notes); exit direct input mode
-  if (isDirectInputActive) {
-    unfocusDirectInput();
+  // If user is actively typing directly inside GC editor and GC window currently has focus, ignore external stream
+  if (document.hasFocus() && document.activeElement === editorTextBox) {
+    return;
   }
 
   currentOriginalText = text || '';
@@ -1201,6 +1267,11 @@ ipcRenderer.on('undo-corrections-toggle', (event, data) => {
 
 ipcRenderer.on('copied-feedback', (event, data) => {
   if (data && data.targetId && data.targetId !== currentTargetId) return;
+  isDirectInputActive = false;
+  if (editorTextBox) {
+    editorTextBox.setAttribute('contenteditable', 'false');
+    editorTextBox.blur();
+  }
   btnCopyHotkey.classList.add('copied');
   btnCopyText.textContent = '✓ Copied!';
   playSuccessCopySound();

@@ -24,6 +24,9 @@ class TargetInstance {
     this.window = null;
     this.isHoveringWindowPopped = false;
     this.isReviewMode = false;
+    this.isDirectInputActive = false;
+    this.isPasting = false;
+    this.pasteTimer = null;
     this.isCorrectionsUndone = false;
     this.savedCorrectedText = '';
     this.currentTypedText = '';
@@ -36,6 +39,7 @@ class TargetInstance {
 // Target instances map: targetId -> TargetInstance
 const targetInstances = new Map();
 let activeTargetId = 'terminal';
+let isBlurredToUntrackedApp = false;
 
 let tray = null;
 let keyMonitor = null;
@@ -197,19 +201,16 @@ function createTargetWindow(targetId, targetName) {
     const isCheck = (isMac ? (input.meta && input.shift) : (input.control && input.alt)) &&
                     (input.key.toLowerCase() === 'z' || input.code === 'KeyZ');
     if (isCheck) {
-      const inst = targetInstances.get(targetId);
-      if (inst && !inst.isReviewMode) {
-        event.preventDefault();
-        handleCheckHotkey(targetId);
-        return;
-      }
+      event.preventDefault();
+      handleCheckHotkey(targetId);
+      return;
     }
 
     const isCopy = (isMac ? (input.meta && input.shift) : (input.control && input.alt)) &&
                    (input.key.toLowerCase() === 'x' || input.code === 'KeyX');
     if (isCopy) {
       event.preventDefault();
-      handleHotkey();
+      handleHotkey(targetId);
       return;
     }
   });
@@ -218,29 +219,16 @@ function createTargetWindow(targetId, targetName) {
     activeTargetId = targetId;
     if (process.platform === 'darwin') {
       app.focus({ steal: true });
-    }
-    // When the user clicks directly inside GC's HUD to copy or interact, elevate it only if alwaysOnTop is explicitly enabled
-    if (isAlwaysOnTopEnabled) {
-      if (process.platform === 'darwin') {
-        win.setAlwaysOnTop(true, 'floating', 1);
-      } else {
-        win.setAlwaysOnTop(true);
-      }
+      win.setAlwaysOnTop(true, 'floating', 1);
     } else {
-      win.setAlwaysOnTop(false);
+      win.setAlwaysOnTop(true);
     }
   });
 
   win.on('blur', () => {
+    // When GC loses focus (e.g. user switched to browser), lower the window so other apps can block/cover it
     if (!isAlwaysOnTopEnabled && win.isAlwaysOnTop()) {
       win.setAlwaysOnTop(false);
-    }
-    const inst = targetInstances.get(targetId);
-    if (inst) {
-      inst.isDirectInputActive = false;
-    }
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('window-blur', { targetId });
     }
   });
 
@@ -289,7 +277,7 @@ function bringTargetToTop(targetId) {
   const inst = targetInstances.get(targetId);
   if (!inst || !inst.window || inst.window.isDestroyed()) return;
 
-  // Multi-target isolation: lower all other target windows so only this active target's UI is on top
+  // Multi-target isolation: lower all other target windows so only this active target's UI is elevated
   for (const [tId, otherInst] of targetInstances) {
     if (tId !== targetId && otherInst.window && !otherInst.window.isDestroyed()) {
       if (otherInst.window.isAlwaysOnTop()) {
@@ -298,20 +286,14 @@ function bringTargetToTop(targetId) {
     }
   }
 
-  // Elevate this target's window only if alwaysOnTop is enabled, otherwise keep non-topmost so it never blocks other apps
-  if (isAlwaysOnTopEnabled) {
-    if (process.platform === 'darwin') {
-      inst.window.setAlwaysOnTop(true, 'floating', 1);
-    } else {
-      inst.window.setAlwaysOnTop(true);
-    }
+  // Elevate this active target's window so it sits above its target app
+  if (process.platform === 'darwin') {
+    inst.window.setAlwaysOnTop(true, 'floating', 1);
   } else {
-    if (inst.window.isAlwaysOnTop()) {
-      inst.window.setAlwaysOnTop(false);
-    }
+    inst.window.setAlwaysOnTop(true);
   }
 
-  // If window is popped, show inactive and move to top of z-order without stealing keyboard focus
+  // If window is popped, ensure it's visible in z-order without stealing OS keyboard focus from the target app
   if (inst.isHoveringWindowPopped) {
     inst.window.showInactive();
     inst.window.moveTop();
@@ -319,6 +301,7 @@ function bringTargetToTop(targetId) {
 }
 
 function lowerAllWindows() {
+  if (isAlwaysOnTopEnabled) return;
   for (const inst of targetInstances.values()) {
     if (inst.window && !inst.window.isDestroyed()) {
       if (inst.window.isAlwaysOnTop()) {
@@ -361,6 +344,11 @@ function showHoveringWindow(targetId) {
 function hideHoveringWindow(targetId) {
   const inst = targetInstances.get(targetId);
   if (!inst) return;
+  if (inst.pasteTimer) {
+    clearTimeout(inst.pasteTimer);
+    inst.pasteTimer = null;
+  }
+  inst.isPasting = false;
   inst.isHoveringWindowPopped = false;
   inst.isReviewMode = false;
   inst.isDirectInputActive = false;
@@ -415,23 +403,53 @@ function showAndFocusForDirectInput(targetId) {
   updateTray();
 }
 
+function onPasteCompleted(targetId) {
+  const inst = targetInstances.get(targetId);
+  if (!inst) return;
+  if (inst.pasteTimer) {
+    clearTimeout(inst.pasteTimer);
+    inst.pasteTimer = null;
+  }
+  inst.isPasting = false;
+
+  // Per user requirements:
+  // Once the corrected/revised content has been transmitted to the source:
+  // - For text editors (Notepad, Notes, TextEdit): content is transmitted via pasteToLinkedApp,
+  //   so close this target's GC UI immediately upon paste completion.
+  // - For terminals: content is pasted into the prompt and transmitted/executed when Enter is pressed in the terminal.
+  const isTextEditor = targetId === 'notes' || targetId === 'notepad' || targetId === 'textedit';
+  if (isTextEditor) {
+    hideHoveringWindow(targetId);
+  } else if (inst.isHoveringWindowPopped && inst.window && !inst.window.isDestroyed()) {
+    if (process.platform === 'darwin') {
+      inst.window.setAlwaysOnTop(true, 'floating', 1);
+    } else {
+      inst.window.setAlwaysOnTop(true);
+    }
+    inst.window.showInactive();
+  }
+}
+
 function pasteToLinkedApp(targetId) {
   const isMac = process.platform === 'darwin';
   if (isMac) {
     const inst = targetInstances.get(targetId);
     const targetName = (inst && (inst.linkedAppName || inst.targetName)) || (targetId === 'notes' ? 'Notes' : (targetId === 'textedit' ? 'TextEdit' : 'Terminal'));
-    pasteToTargetMac(targetName);
+    pasteToTargetMac(targetName, targetId);
   } else {
     if (keyMonitor) {
       keyMonitor.pasteToTarget(targetId);
+    } else {
+      onPasteCompleted(targetId);
     }
   }
 }
 
-function pasteToTargetMac(appName) {
+function pasteToTargetMac(appName, targetId = 'terminal') {
   const { exec } = require('child_process');
   const appleScript = `
     tell application "System Events"
+      delay 0.12
       set targetApp to "${appName}"
       set targetProc to missing value
 
@@ -471,11 +489,22 @@ function pasteToTargetMac(appName) {
   `;
   exec(`osascript -e '${appleScript.replace(/'/g, "'\\''")}'`, (err) => {
     if (err) console.error('[GC] Error pasting to Mac target:', err);
+    setTimeout(() => {
+      onPasteCompleted(targetId);
+    }, 60);
   });
 }
 
+let lastCopyTime = 0;
+
 function copyCorrectedTextForTarget(targetInst) {
   if (!targetInst) return;
+  const now = Date.now();
+  if (now - lastCopyTime < 400) {
+    return; // Debounce duplicate triggers
+  }
+  lastCopyTime = now;
+
   const textToCopy = (targetInst.currentCorrectedText && targetInst.currentCorrectedText.trim())
     ? targetInst.currentCorrectedText.trim()
     : (targetInst.currentTypedText ? targetInst.currentTypedText.trim() : '');
@@ -485,15 +514,26 @@ function copyCorrectedTextForTarget(targetInst) {
     console.log(`[GC] Copied corrected text for ${targetInst.targetId}:`, textToCopy);
   }
 
+  // Mark as pasting and deactivate direct input so GC never steals focus back during paste
+  targetInst.isPasting = true;
+  targetInst.isDirectInputActive = false;
+  if (targetInst.pasteTimer) {
+    clearTimeout(targetInst.pasteTimer);
+  }
+  targetInst.pasteTimer = setTimeout(() => {
+    onPasteCompleted(targetInst.targetId);
+  }, 2500);
+
   if (targetInst.window && !targetInst.window.isDestroyed()) {
     targetInst.window.webContents.send('copied-feedback', { targetId: targetInst.targetId, text: textToCopy });
+    if (!isAlwaysOnTopEnabled) {
+      targetInst.window.setAlwaysOnTop(false);
+    }
+    targetInst.window.blur();
   }
 
   // Automatically activate the linked app and paste the corrected text!
   pasteToLinkedApp(targetInst.targetId);
-
-  // Per user requirements: GC's UI stays visible after copying/pasting.
-  // It only disappears when Enter key is pressed in the terminal to submit the prompt.
 }
 
 function isAnyWindowPopped() {
@@ -517,8 +557,38 @@ function findTargetBySender(sender) {
 // Rule A: Under Input Mode, pressing Copy opens GC's UI and focuses it for direct input.
 // Rule B: After Check hotkey has been pressed (Review Mode), pressing Copy copies corrected text.
 // -------------------------------------------------------------
-function handleHotkey() {
+let lastHotkeyXTime = 0;
+
+function resolveTargetInstanceForHotkey(targetIdOverride = null) {
+  if (targetIdOverride) {
+    return getOrCreateTargetInstance(targetIdOverride);
+  }
+
+  const focusedWin = BrowserWindow.getFocusedWindow();
+  if (focusedWin && !focusedWin.isDestroyed()) {
+    const focusedInst = findTargetBySender(focusedWin.webContents);
+    if (focusedInst) return focusedInst;
+  }
+
+  let targetInst = getOrCreateTargetInstance(activeTargetId || 'terminal');
+  if (!targetInst.isHoveringWindowPopped && isBlurredToUntrackedApp) {
+    for (const inst of targetInstances.values()) {
+      if (inst.isHoveringWindowPopped) {
+        return inst;
+      }
+    }
+  }
+  return targetInst;
+}
+
+function handleHotkey(targetIdOverride = null) {
   if (!keyMonitor) return;
+
+  const now = Date.now();
+  if (now - lastHotkeyXTime < 300) {
+    return; // Cooldown: prevent duplicate triggers from globalShortcut + before-input-event
+  }
+  lastHotkeyXTime = now;
 
   if (!isGCRunning) {
     isGCRunning = true;
@@ -528,20 +598,8 @@ function handleHotkey() {
     console.log('[GC] Started (isGCRunning = true). Monitoring Terminal, Notes, etc.');
   }
 
-  // Resolve target instance
-  let targetInst = targetInstances.get(activeTargetId);
-  if (!targetInst || !targetInst.isHoveringWindowPopped) {
-    for (const inst of targetInstances.values()) {
-      if (inst.isHoveringWindowPopped) {
-        targetInst = inst;
-        break;
-      }
-    }
-  }
-
-  if (!targetInst) {
-    targetInst = getOrCreateTargetInstance(activeTargetId || 'terminal');
-  }
+  // Resolve target instance accurately for multi-tasking
+  const targetInst = resolveTargetInstanceForHotkey(targetIdOverride);
 
   // If in Review Mode (after Check hotkey was triggered), copy the corrected text
   if (targetInst.isHoveringWindowPopped && targetInst.isReviewMode) {
@@ -646,7 +704,15 @@ function handleUndoHotkey(targetIdOverride = null) {
 // Hotkey: Shift + Command + Z (Mac) / Ctrl + Alt + Z (Win)
 // Signal that user finished typing, and begin review
 // -------------------------------------------------------------
+let lastHotkeyZTime = 0;
+
 function handleCheckHotkey(targetIdOverride = null) {
+  const now = Date.now();
+  if (now - lastHotkeyZTime < 300) {
+    return; // Cooldown: prevent duplicate triggers from globalShortcut + before-input-event + renderer
+  }
+  lastHotkeyZTime = now;
+
   if (!isGCRunning) {
     isGCRunning = true;
     if (keyMonitor) {
@@ -657,11 +723,7 @@ function handleCheckHotkey(targetIdOverride = null) {
     console.log('[GC] Started via check hotkey (isGCRunning = true).');
   }
 
-  const targetId = targetIdOverride || activeTargetId || 'terminal';
-  let inst = targetInstances.get(targetId);
-  if (!inst) {
-    inst = getOrCreateTargetInstance(targetId);
-  }
+  let inst = resolveTargetInstanceForHotkey(targetIdOverride);
 
   // 1. Check if the target has typed text in its buffer
   let textToCheck = (inst.currentTypedText || '').trim();
@@ -697,6 +759,7 @@ function handleCheckHotkey(targetIdOverride = null) {
   }
 
   inst.isReviewMode = true;
+  inst.isDirectInputActive = false;
   inst.isCorrectionsUndone = false;
   registerReviewUndoShortcut();
 
@@ -1278,14 +1341,15 @@ app.whenReady().then(async () => {
 
       activeTargetId = target || 'terminal';
       const inst = getOrCreateTargetInstance(activeTargetId, targetName);
-      inst.currentTypedText = text || '';
-      inst.isDirectInputActive = false;
 
-      const isTextEditor = (activeTargetId === 'notes' || activeTargetId === 'textedit' || activeTargetId === 'notepad');
-
-      // If user pasted in a text editor (e.g. Notes, Notepad), buffer the text for grammar review (Shift+Cmd+Z / Ctrl+Alt+Z)
-      // but do NOT auto-pop the HUD unless it was already opened by the user!
-      if (isPaste && isTextEditor && !inst.isHoveringWindowPopped) {
+      // CRITICAL FIX: Only if the Focused button is activated (user is using GC)
+      // can content be inputted into GC's UI!
+      // If user is not working inside GC's UI (!inst.isDirectInputActive):
+      // - Do NOT auto-pop the HUD window!
+      // - Do NOT bring window to top!
+      // - Do NOT send typing-update to input content into GC's UI!
+      // - Do NOT overwrite currentTypedText with external typing/pasting!
+      if (!inst.isDirectInputActive) {
         return;
       }
 
@@ -1325,10 +1389,19 @@ app.whenReady().then(async () => {
     keyMonitor.on('action', ({ target, targetName, action }) => {
       if (action === 'enter') {
         // In Terminal, Enter submits prompt -> dismiss that target's hovering window
+        // Text editors (Notepad / Notes / TextEdit) must NEVER dismiss on Enter
+        if (target === 'notes' || target === 'notepad' || target === 'textedit') {
+          return;
+        }
+
         hideHoveringWindow(target || 'terminal');
       } else if (action === 'undo') {
         handleUndoHotkey(target);
       }
+    });
+
+    keyMonitor.on('pasted', ({ target }) => {
+      onPasteCompleted(target || 'terminal');
     });
 
     keyMonitor.on('target_closed', ({ target }) => {
@@ -1337,39 +1410,38 @@ app.whenReady().then(async () => {
     });
 
     keyMonitor.on('focus', ({ target, targetName }) => {
-      const prevTargetId = activeTargetId;
+      isBlurredToUntrackedApp = false;
       activeTargetId = target || 'terminal';
-
-      // If switching from one target to another (e.g., from Notes to Terminal),
-      // hide the previous target's hovering window if it's not in active review mode!
-      if (prevTargetId && prevTargetId !== activeTargetId) {
-        const prevInst = targetInstances.get(prevTargetId);
-        if (prevInst && prevInst.isHoveringWindowPopped && !prevInst.isReviewMode) {
-          hideHoveringWindow(prevTargetId);
-        }
-      }
-
       const inst = getOrCreateTargetInstance(activeTargetId, targetName);
-      inst.isDirectInputActive = false;
-      if (inst.window && !inst.window.isDestroyed()) {
-        inst.window.webContents.send('target-focused', { targetId: activeTargetId, targetName });
+
+      // Ignore focus events while GC is actively pasting into this target
+      if (inst.isPasting) {
+        return;
       }
+
+      // Multi-tasking: Do NOT close or hide other targets' open GC UIs!
+      // Each input source preserves its own GC UI until content is transmitted.
+
+      // If this target's GC UI is popped, bring it back above this target app without stealing focus
       if (inst.isHoveringWindowPopped) {
         bringTargetToTop(activeTargetId);
+      }
+
+      if (inst.window && !inst.window.isDestroyed()) {
+        inst.window.webContents.send('target-focused', {
+          targetId: activeTargetId,
+          targetName,
+          isDirectInputActive: inst.isDirectInputActive
+        });
       }
     });
 
     keyMonitor.on('blur', () => {
       // User switched away to an untracked app (e.g. browser, desktop switch, etc.)
+      // Lower all GC windows so other apps/software can naturally cover/block them.
+      // Under multi-tasking rules, NEVER close any opened GC UI on blur!
+      isBlurredToUntrackedApp = true;
       lowerAllWindows();
-      for (const [tId, inst] of targetInstances) {
-        // If the user is actively typing directly in GC or is in review mode,
-        // preserve the window and text draft so they can continue typing upon returning
-        const isComposingInGC = inst.isDirectInputActive || (inst.currentTypedText && inst.currentTypedText.trim().length > 0);
-        if (inst.isHoveringWindowPopped && !inst.isReviewMode && !isComposingInGC) {
-          hideHoveringWindow(tId);
-        }
-      }
     });
 
     keyMonitor.on('error', (err) => {
@@ -1402,8 +1474,9 @@ app.whenReady().then(async () => {
   }
 
   // Setup IPC Handlers
-  ipcMain.on('manual-hotkey-trigger', () => {
-    handleHotkey();
+  ipcMain.on('manual-hotkey-trigger', (event) => {
+    const inst = findTargetBySender(event.sender);
+    handleHotkey(inst ? inst.targetId : null);
   });
 
   ipcMain.on('trigger-check-manual', (event, data) => {
