@@ -990,6 +990,10 @@ namespace GrammarChecker
             if (key == Keys.Menu || key == Keys.LMenu || key == Keys.RMenu || vkCode == 18 || vkCode == 164 || vkCode == 165)
             {
                 _altPressed = isKeyDown;
+                if (!isKeyDown)
+                {
+                    _altPressed = false;
+                }
                 return CallNextHookEx(_hookID, nCode, wParam, lParam);
             }
 
@@ -1007,15 +1011,12 @@ namespace GrammarChecker
             // 2. Real-time physical modifier state detection
             bool isWin = _winPressed ||
                          ((GetAsyncKeyState((int)Keys.LWin) & 0x8000) != 0) ||
-                         ((GetAsyncKeyState((int)Keys.RWin) & 0x8000) != 0) ||
-                         ((GetKeyState((int)Keys.LWin) & 0x80) != 0) ||
-                         ((GetKeyState((int)Keys.RWin) & 0x80) != 0);
+                         ((GetAsyncKeyState((int)Keys.RWin) & 0x8000) != 0);
 
             bool isShift = _shiftPressed ||
                            ((GetAsyncKeyState((int)Keys.ShiftKey) & 0x8000) != 0) ||
                            ((GetAsyncKeyState((int)Keys.LShiftKey) & 0x8000) != 0) ||
-                           ((GetAsyncKeyState((int)Keys.RShiftKey) & 0x8000) != 0) ||
-                           ((GetKeyState((int)Keys.ShiftKey) & 0x80) != 0);
+                           ((GetAsyncKeyState((int)Keys.RShiftKey) & 0x8000) != 0);
 
             // 3. CRITICAL: Any keystroke while Windows key is held down (Win+Shift+S, Win+E, Win+R, Win+D, Win+V, etc.)
             // must NEVER be recorded as typing, must NEVER trigger GC, and must pass through immediately with zero delay!
@@ -1038,14 +1039,12 @@ namespace GrammarChecker
             bool isCtrl = _ctrlPressed ||
                           ((GetAsyncKeyState((int)Keys.ControlKey) & 0x8000) != 0) ||
                           ((GetAsyncKeyState((int)Keys.LControlKey) & 0x8000) != 0) ||
-                          ((GetAsyncKeyState((int)Keys.RControlKey) & 0x8000) != 0) ||
-                          ((GetKeyState((int)Keys.ControlKey) & 0x80) != 0);
+                          ((GetAsyncKeyState((int)Keys.RControlKey) & 0x8000) != 0);
 
             bool isAlt = _altPressed ||
                          ((GetAsyncKeyState((int)Keys.Menu) & 0x8000) != 0) ||
                          ((GetAsyncKeyState((int)Keys.LMenu) & 0x8000) != 0) ||
-                         ((GetAsyncKeyState((int)Keys.RMenu) & 0x8000) != 0) ||
-                         ((GetKeyState((int)Keys.Menu) & 0x80) != 0);
+                         ((GetAsyncKeyState((int)Keys.RMenu) & 0x8000) != 0);
 
             // 4. Ignore hotkey triggering combinations (e.g. Ctrl + Alt + X or Ctrl + Alt + Z)
             if (isCtrl && isAlt && (key == Keys.X || key == Keys.Z))
@@ -1143,21 +1142,23 @@ namespace GrammarChecker
                                 DeleteWordBackward();
                                 if (key == Keys.Back && !isNotes)
                                 {
-                                    // In Terminal / agy CLI / PowerShell, native Ctrl+Backspace sends \x08 or \x7f
-                                    // which only deletes a single character in agy CLI (Bubble Tea).
-                                    // Synthesize Ctrl + W (\x17) so agy CLI and shells delete word-by-word.
-                                    _isSelfInjecting = true;
-                                    try
+                                    // In CyberTerminal, its own frontend xterm handler natively converts Ctrl+Backspace to \x17.
+                                    // Only synthesize Ctrl + W (\x17) when target is system Terminal / agy CLI / PowerShell.
+                                    if (!string.Equals(_activeTargetName, "CyberTerminal", StringComparison.OrdinalIgnoreCase))
                                     {
-                                        const int KEYEVENTF_KEYUP = 0x0002;
-                                        keybd_event((byte)Keys.W, 0, 0, UIntPtr.Zero);
-                                        keybd_event((byte)Keys.W, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                                        _isSelfInjecting = true;
+                                        try
+                                        {
+                                            const int KEYEVENTF_KEYUP = 0x0002;
+                                            keybd_event((byte)Keys.W, 0, 0, UIntPtr.Zero);
+                                            keybd_event((byte)Keys.W, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                                        }
+                                        finally
+                                        {
+                                            _isSelfInjecting = false;
+                                        }
+                                        return (IntPtr)1; // Suppress original Ctrl+Backspace
                                     }
-                                    finally
-                                    {
-                                        _isSelfInjecting = false;
-                                    }
-                                    return (IntPtr)1; // Suppress original Ctrl+Backspace
                                 }
                             }
                             // Ctrl + Delete: Delete following word
@@ -1222,17 +1223,22 @@ namespace GrammarChecker
                                             keybd_event((byte)Keys.Back, 0, 0, UIntPtr.Zero);
                                             keybd_event((byte)Keys.Back, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
                                         }
-                                        else
+                                        else if (!string.Equals(_activeTargetName, "CyberTerminal", StringComparison.OrdinalIgnoreCase))
                                         {
                                             // In Terminal / agy CLI / PowerShell: Ctrl + W is word deletion
                                             keybd_event((byte)Keys.W, 0, 0, UIntPtr.Zero);
                                             keybd_event((byte)Keys.W, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
                                         }
                                         keybd_event((byte)Keys.ControlKey, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
-                                        keybd_event((byte)Keys.Menu, 0, 0, UIntPtr.Zero);
                                     }
                                     finally
                                     {
+                                        const int KEYEVENTF_KEYUP = 0x0002;
+                                        // CRITICAL: Guarantee that Menu (Alt) and Control keys are never left held down!
+                                        // Never re-synthesize fake Menu Key Down (0x12), which leaves Alt stuck in OS!
+                                        keybd_event((byte)Keys.Menu, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                                        keybd_event((byte)Keys.ControlKey, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                                        _altPressed = false;
                                         _isSelfInjecting = false;
                                     }
                                     return (IntPtr)1; // Suppress original Alt+Backspace WM_SYSKEYDOWN
@@ -1253,10 +1259,13 @@ namespace GrammarChecker
                                         keybd_event((byte)Keys.Delete, 0, 0, UIntPtr.Zero);
                                         keybd_event((byte)Keys.Delete, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
                                         keybd_event((byte)Keys.ControlKey, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
-                                        keybd_event((byte)Keys.Menu, 0, 0, UIntPtr.Zero);
                                     }
                                     finally
                                     {
+                                        const int KEYEVENTF_KEYUP = 0x0002;
+                                        keybd_event((byte)Keys.Menu, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                                        keybd_event((byte)Keys.ControlKey, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                                        _altPressed = false;
                                         _isSelfInjecting = false;
                                     }
                                     return (IntPtr)1; // Suppress original Alt+Delete WM_SYSKEYDOWN
