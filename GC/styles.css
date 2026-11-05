@@ -645,16 +645,45 @@ textarea,
   color: #ef4444;
 }
 
-/* Accepted state when user clicks on a correction */
-.inline-correction-token.accepted .inline-correction-pill {
-  display: none;
+/* Pill removal icon */
+.pill-remove-icon {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0.6;
+  vertical-align: baseline;
+  transition: opacity 0.15s ease, transform 0.15s ease, color 0.15s ease;
 }
 
-.inline-correction-token.accepted .inline-original-word {
-  color: #4ade80;
-  text-decoration: none;
+.inline-correction-token:hover .pill-remove-icon {
   opacity: 1;
-  font-weight: 500;
+  color: #f87171;
+  transform: scale(1.15);
+}
+
+/* Removed state when user left-clicks a correction capsule to reject/remove it */
+.inline-correction-token.removed {
+  margin: 0 !important;
+}
+
+.inline-correction-token.removed .inline-correction-pill {
+  display: none !important;
+}
+
+.inline-correction-token.removed .inline-original-word {
+  color: inherit !important;
+  text-decoration: none !important;
+  opacity: 1 !important;
+  font-weight: normal;
+  cursor: pointer;
+}
+
+.inline-correction-token.removed:hover .inline-original-word {
+  color: var(--accent-amber, #f59e0b) !important;
+  text-decoration: underline !important;
+  text-decoration-style: dotted !important;
 }
 
 /* Bottom HUD Footer */

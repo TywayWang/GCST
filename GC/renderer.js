@@ -855,6 +855,26 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+function updateCorrectionBadgeCount() {
+  if (!correctionBadge) return;
+  const activeTokens = editorTextBox ? editorTextBox.querySelectorAll('.inline-correction-token:not(.removed)') : [];
+  const activeCount = activeTokens.length;
+
+  if (activeCount > 0) {
+    correctionBadge.textContent = `[${activeCount} Correction${activeCount === 1 ? '' : 's'}]`;
+    correctionBadge.className = 'correction-badge-btn corrected';
+    if (lastReviewArrow) {
+      lastReviewArrow.className = 'header-arrow result-transition-arrow arrow-blue';
+    }
+  } else {
+    correctionBadge.textContent = '[0 Corrections]';
+    correctionBadge.className = 'correction-badge-btn perfect';
+    if (lastReviewArrow) {
+      lastReviewArrow.className = 'header-arrow result-transition-arrow arrow-green';
+    }
+  }
+}
+
 function recalculateCorrectedTextFromDOM() {
   if (!editorTextBox) return;
   let text = '';
@@ -863,18 +883,65 @@ function recalculateCorrectedTextFromDOM() {
       text += node.textContent;
     } else if (node.classList && node.classList.contains('inline-correction-token')) {
       const origSpan = node.querySelector('.inline-original-word');
-      const replVal = node.getAttribute('data-repl');
-      if (node.classList.contains('accepted')) {
-        text += (replVal !== 'delete' ? replVal : '');
+      const origVal = node._origText !== undefined
+        ? node._origText
+        : (node.getAttribute('data-orig') || (origSpan ? origSpan.textContent : ''));
+      const replVal = node._replText !== undefined
+        ? node._replText
+        : (node.getAttribute('data-repl') || '');
+      const isDelete = node._isDelete !== undefined
+        ? node._isDelete
+        : (node.getAttribute('data-is-delete') === 'true');
+
+      if (node.classList.contains('removed')) {
+        // User removed this correction: preserve original uncorrected text
+        text += origVal;
       } else {
-        text += origSpan ? origSpan.textContent : '';
+        // Active correction: apply the replacement (omit if delete)
+        text += (isDelete ? '' : replVal);
       }
     } else {
       text += node.textContent;
     }
   }
-  currentCorrectedText = text;
-  ipcRenderer.send('update-corrected-text', { targetId: currentTargetId, text });
+  currentCorrectedText = text.replace(/[ \t]{2,}/g, ' ');
+  ipcRenderer.send('update-corrected-text', { targetId: currentTargetId, text: currentCorrectedText });
+}
+
+function toggleCorrectionToken(token) {
+  if (!token) return;
+  const isRemoved = token.classList.contains('removed');
+  const origSpan = token.querySelector('.inline-original-word');
+  const origWord = token._origText !== undefined
+    ? token._origText
+    : (token.getAttribute('data-orig') || (origSpan ? origSpan.textContent : ''));
+  const replVal = token._replText !== undefined
+    ? token._replText
+    : (token.getAttribute('data-repl') || '');
+  const isDelete = token._isDelete !== undefined
+    ? token._isDelete
+    : (token.getAttribute('data-is-delete') === 'true');
+  const replDisplay = isDelete ? 'delete' : replVal;
+
+  if (isRemoved) {
+    // Restore correction
+    token.classList.remove('removed');
+    const origMargin = token.getAttribute('data-orig-margin');
+    if (origMargin !== null) {
+      token.style.margin = origMargin;
+    }
+    const origTooltip = token.getAttribute('data-active-tooltip') || '';
+    token.setAttribute('title', origTooltip);
+  } else {
+    // Remove correction: capsule is dismissed, original word is retained in sentence
+    token.classList.add('removed');
+    token.setAttribute('data-orig-margin', token.style.margin || '');
+    token.style.margin = '0';
+    token.setAttribute('title', `Correction removed (kept "${origWord}"). Click to restore suggestion ("${replDisplay}").`);
+  }
+  playPopSound();
+  recalculateCorrectedTextFromDOM();
+  updateCorrectionBadgeCount();
 }
 
 // -------------------------------------------------------------
@@ -991,6 +1058,7 @@ function renderInlineReview(originalText, correctedText, issues) {
     const typeClass = m.type === 'grammar' ? 'grammar' : (m.type === 'vocabulary' ? 'vocabulary' : 'spelling');
     const typeLabel = m.type === 'grammar' ? 'Grammar' : (m.type === 'vocabulary' ? 'Vocabulary' : 'Spelling (UK)');
     const tooltip = escapeHtml(`${typeLabel}: ${m.explanation}`);
+    const isDelete = !m.replacement;
     const displayRepl = m.replacement ? escapeHtml(m.replacement) : 'delete';
     const displayOrig = escapeHtml(m.original);
 
@@ -998,8 +1066,8 @@ function renderInlineReview(originalText, correctedText, issues) {
     const extraMargin = lenDiff > 0 ? Math.min(16, Math.max(4, Math.round(lenDiff * 3.5))) : 4;
     const popDelay = Math.min(idx * 35, 350);
 
-    html += `<span class="inline-correction-token ${typeClass}" style="margin: 0 ${extraMargin}px;" data-orig="${displayOrig}" data-repl="${displayRepl}" title="${tooltip}">` +
-      `<span class="inline-correction-pill" style="animation-delay: ${popDelay}ms;">${displayRepl}</span>` +
+    html += `<span class="inline-correction-token ${typeClass}" style="margin: 0 ${extraMargin}px;" data-orig="${displayOrig}" data-repl="${m.replacement ? displayRepl : ''}" data-is-delete="${isDelete ? 'true' : 'false'}" data-orig-margin="0 ${extraMargin}px" data-active-tooltip="${tooltip}" title="Left click capsule to remove correction: '${displayOrig}' → '${displayRepl}'">` +
+      `<span class="inline-correction-pill" style="animation-delay: ${popDelay}ms;" title="Left click to remove this correction">${displayRepl}<span class="pill-remove-icon" aria-hidden="true">×</span></span>` +
       `<span class="inline-original-word">${displayOrig}</span>` +
     `</span>`;
 
@@ -1012,22 +1080,37 @@ function renderInlineReview(originalText, correctedText, issues) {
 
   editorTextBox.innerHTML = html;
 
-  // Clicking an inline suggestion accepts that correction
+  // Left click on a correction's capsule removes that correction
   const tokens = editorTextBox.querySelectorAll('.inline-correction-token');
-  tokens.forEach((token) => {
+  tokens.forEach((token, idx) => {
+    const m = nonOverlapping[idx];
+    if (m) {
+      token._origText = m.original;
+      token._replText = m.replacement;
+      token._isDelete = !m.replacement;
+    }
+
+    const pill = token.querySelector('.inline-correction-pill');
+    if (pill) {
+      pill.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleCorrectionToken(token);
+      });
+    }
+
     token.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (token.classList.contains('accepted')) return;
-      token.classList.add('accepted');
-      const origSpan = token.querySelector('.inline-original-word');
-      const replVal = token.getAttribute('data-repl');
-      if (origSpan && replVal && replVal !== 'delete') {
-        origSpan.textContent = replVal;
+      const selection = window.getSelection();
+      if (selection && selection.toString().trim().length > 0) {
+        return; // Ignore mouse drag text selection
       }
-      playPopSound();
-      recalculateCorrectedTextFromDOM();
+      toggleCorrectionToken(token);
     });
   });
+
+  recalculateCorrectedTextFromDOM();
+  updateCorrectionBadgeCount();
 }
 
 // -------------------------------------------------------------
